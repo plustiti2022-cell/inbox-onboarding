@@ -1,0 +1,3 @@
+certifi
+requests>=2.25
+qrcode[pil]>=8.0

@@ -1,0 +1,8 @@
+{
+  "internal_domains": ["hashkey.com", "hts.sg"],
+  "compliance_addresses": [],
+  "compliance_name_hints": ["KYC", "Compliance", "合规", "OTC Onboarding", "otc_onboarding"],
+  "own_team_addresses": [],
+  "own_team_name_hints": [],
+  "json_mode": true
+}

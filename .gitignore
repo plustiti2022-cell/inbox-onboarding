@@ -1,0 +1,14 @@
+.env
+__pycache__/
+*.pyc
+node_modules/
+~$*.xlsx
+*.writing.xlsx
+onboarding_source/tests/_outputs/
+.venv/
+.runtime/
+outputs/
+/exports/
+/tmp/
+*.xlsx
+/My workflow 2.json
