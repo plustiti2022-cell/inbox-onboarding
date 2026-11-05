@@ -58,6 +58,27 @@ class WorkflowTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "no identifiable"):
             find_customer(records, result(company_name="", customer_name="", email=""))
 
+    def test_conflicting_matches_leave_progress_intact_and_continue(self):
+        store = MemoryStore()
+        company = store.create_record(PROGRESS_TABLE, {"公司名称": "North Star Limited"})
+        email = store.create_record(PROGRESS_TABLE, {"邮件": "alice@northstar.example"})
+        for hour in (1, 2):
+            store.create_record(MAIL_TABLE, {"receivedDateTime": f"2026-11-03T0{hour}:00:00Z",
+                                             "internetMessageId": f"<{hour}@example.invalid>"})
+        analyzer = MailAnalyzer({"LLM_API_KEY": "synthetic-secret", "LLM_API_HOST": "https://example.com/v1",
+                                 "LLM_MODEL": "synthetic-model"}, {},
+                                Path(__file__).resolve().parents[1] / "prompt_onboarding.txt")
+        with patch.object(analyzer, "analyze", side_effect=[result(), result(is_onboarding=False)]) as analyze:
+            report = process_pending(store, analyzer)
+            self.assertEqual((report["manual_review"], report["non_onboarding"], report["failed"]), (1, 1, 0))
+            self.assertEqual(process_pending(store, analyzer)["processed"], 0)
+            self.assertEqual(analyze.call_count, 2)
+        self.assertEqual(store.list_records(PROGRESS_TABLE), [company, email])
+        first, second = [row["fields"] for row in store.list_records(MAIL_TABLE)]
+        self.assertEqual((first["AI处理"], second["AI处理"]), ("人工核查", "AI已处理"))
+        for match in (company, email):
+            self.assertIn(match["record_id"], first["处理说明"])
+
     def test_or_matches_conflicting_rows_without_picking_first(self):
         records = [{"record_id": "a", "fields": {"公司名称": "North Star Limited"}},
                    {"record_id": "b", "fields": {"邮件": "alice@northstar.example"}}]
@@ -200,6 +221,22 @@ class WorkflowTests(unittest.TestCase):
                     with self.assertRaisesRegex(RuntimeError, expected) as raised:
                         analyzer.analyze({}, [])
                 self.assertNotIn("synthetic-secret", str(raised.exception))
+
+    def test_model_sends_thinking_option_only_when_configured(self):
+        env = {"LLM_API_KEY": "synthetic-secret", "LLM_API_HOST": "https://example.com/v1",
+               "LLM_MODEL": "qwen3.8-max"}
+        prompt = Path(__file__).resolve().parents[1] / "prompt_onboarding.txt"
+        for setting, expected in (("", None), ("false", False), ("true", True)):
+            with self.subTest(setting=setting):
+                analyzer = MailAnalyzer({**env, "LLM_ENABLE_THINKING": setting}, {}, prompt)
+                response = {"choices": [{"message": {"content": json.dumps(result())}}]}
+                with patch("model.urlopen", return_value=io.BytesIO(json.dumps(response).encode())) as request:
+                    analyzer.analyze({}, [])
+                payload = json.loads(request.call_args.args[0].data)
+                if expected is None:
+                    self.assertNotIn("enable_thinking", payload)
+                else:
+                    self.assertIs(payload["enable_thinking"], expected)
 
     def test_original_recipient_expression_headers(self):
         self.assertEqual(canonical_header("{{ (.item.json.value[0].ccRecipients ?? []).map(r => r.emailAddress?.address).filter(Boolean).join(', ') }}"), "ccRecipients.addresses")

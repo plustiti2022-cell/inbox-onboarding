@@ -78,6 +78,10 @@ class MailAnalyzer:
         self.timeout = float(env.get("LLM_TIMEOUT_SECONDS", "300"))
         if self.timeout <= 0:
             raise ValueError("LLM_TIMEOUT_SECONDS must be positive")
+        thinking = env.get("LLM_ENABLE_THINKING", "").lower()
+        if thinking not in ("", "true", "false"):
+            raise ValueError("LLM_ENABLE_THINKING must be true or false")
+        self.enable_thinking = None if not thinking else thinking == "true"
         self.config = config
         self.prompt = prompt_path.read_text(encoding="utf-8-sig")
         self.context = ssl.create_default_context(cafile=certifi.where())
@@ -102,6 +106,8 @@ class MailAnalyzer:
         ]}
         if self.config.get("json_mode", True):
             payload["response_format"] = {"type": "json_object"}
+        if self.enable_thinking is not None:
+            payload["enable_thinking"] = self.enable_thinking
         request = Request(self.url, data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
                           headers={"Content-Type": "application/json", "Authorization": "Bearer " + self.key}, method="POST")
         try:

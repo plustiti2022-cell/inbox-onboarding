@@ -1,11 +1,15 @@
 """Direct Lark HTTPS/OAuth. No CLI or global CLI credentials are used."""
 from __future__ import annotations
 import base64
+from contextlib import contextmanager
 import ctypes
+import errno
+import hashlib
 import json
 import logging
 import os
 import re
+import sys
 import tempfile
 import threading
 import time
@@ -58,25 +62,36 @@ class LarkError(RuntimeError):
 class LarkRunLock:
     """Prevent two local workers from writing the same Base out of order."""
     def __init__(self, app_id):
-        import msvcrt
         path = PROJECT / ".runtime" / "lark" / app_id / "workflow.lock"
         path.parent.mkdir(parents=True, exist_ok=True)
         self.file = path.open("a+b")
-        if path.stat().st_size == 0:
-            self.file.write(b"0")
-            self.file.flush()
-        self.file.seek(0)
         try:
-            msvcrt.locking(self.file.fileno(), msvcrt.LK_NBLCK, 1)
-        except OSError:
+            if os.name == "nt":
+                import msvcrt
+                if path.stat().st_size == 0:
+                    self.file.write(b"0")
+                    self.file.flush()
+                self.file.seek(0)
+                msvcrt.locking(self.file.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(self.file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError as error:
             self.file.close()
+            if os.name != "nt" and error.errno not in (errno.EACCES, errno.EAGAIN):
+                raise
             raise LarkError("Another local worker is already processing this application's Base", "local_worker_busy") from None
 
     def close(self):
-        import msvcrt
-        self.file.seek(0)
-        msvcrt.locking(self.file.fileno(), msvcrt.LK_UNLCK, 1)
         self.file.close()
+
+@contextmanager
+def mac_refresh_lock(path):
+    import fcntl
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a+b") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        yield
 
 class SecureJSON:
     """Windows DPAPI protects project-scoped user/device tokens at rest."""
@@ -106,6 +121,45 @@ class SecureJSON:
 
     def save(self, data):
         atomic_write(self.path, self.crypt(json.dumps(data, ensure_ascii=False).encode()))
+
+class KeychainJSON:
+    """Store one project's OAuth state as a login Keychain generic password."""
+    def __init__(self, path):
+        import Security
+
+        self.security = Security
+        path = Path(path).resolve()
+        namespace = hashlib.sha256(os.fsencode(path.parent)).hexdigest()
+        self.query = {
+            Security.kSecClass: Security.kSecClassGenericPassword,
+            Security.kSecAttrService: "inbox-onboarding.lark." + namespace,
+            Security.kSecAttrAccount: path.stem,
+        }
+
+    def check(self, status):
+        if status != self.security.errSecSuccess:
+            raise LarkError(f"macOS Keychain access failed (OSStatus {status}); check the login Keychain and Python's access")
+
+    def load(self):
+        sec = self.security
+        status, value = sec.SecItemCopyMatching({**self.query, sec.kSecReturnData: True}, None)
+        if status == sec.errSecItemNotFound:
+            return None
+        self.check(status)
+        return json.loads(bytes(value))
+
+    def save(self, data):
+        from Foundation import NSData
+
+        sec = self.security
+        payload = json.dumps(data, ensure_ascii=False).encode()
+        values = {sec.kSecValueData: NSData.dataWithBytes_length_(payload, len(payload))}
+        status = sec.SecItemUpdate(self.query, values)
+        if status == sec.errSecItemNotFound:
+            status, _ = sec.SecItemAdd({**self.query, **values}, None)
+            if status == sec.errSecDuplicateItem:
+                status = sec.SecItemUpdate(self.query, values)
+        self.check(status)
 
 class LarkHTTP:
     def __init__(self, env, session=None):
@@ -164,8 +218,10 @@ class LarkAuth:
         if not self.app_id or not self.secret:
             raise ValueError("Missing LARK_APP_ID / LARK_APP_SECRET")
         root = PROJECT / ".runtime" / "lark" / self.app_id
-        self.vault = vault or SecureJSON(root / "user_token.dpapi")
-        self.pending = pending or SecureJSON(root / "pending_auth.dpapi")
+        storage = KeychainJSON if sys.platform == "darwin" else SecureJSON
+        self.vault = vault or storage(root / "user_token.dpapi")
+        self.pending = pending or storage(root / "pending_auth.dpapi")
+        self.refresh_lock_path = root / "refresh.lock" if isinstance(self.vault, KeychainJSON) else None
         self.lock = threading.RLock()
 
     def start_authorization(self):
@@ -216,22 +272,34 @@ class LarkAuth:
             data = self.vault.load()
             if not data or data.get("app_id") != self.app_id:
                 raise LarkError("User authorization required: run setup_lark.py --authorize")
-            if data.get("expires_at", 0) <= time.time() + 120:
-                if not data.get("refresh_token"):
-                    raise LarkError("User token expired without refresh token; authorize this application again")
-                try:
-                    refreshed = self._oauth({"grant_type": "refresh_token", "refresh_token": data["refresh_token"]})
-                except LarkError:
-                    # The other batch may have rotated this refresh token first.
-                    latest = self.vault.load() or {}
-                    if (latest.get("app_id") == self.app_id and latest.get("access_token")
-                            and latest["access_token"] != data["access_token"]
-                            and latest.get("expires_at", 0) > time.time()):
-                        return latest["access_token"]
-                    raise
-                self._save_token(refreshed, data)
-                data = self.vault.load()
-            return data["access_token"]
+            if data.get("expires_at", 0) > time.time() + 120:
+                return data["access_token"]
+            if self.refresh_lock_path is None:
+                return self._refresh_access_token(data)
+            with mac_refresh_lock(self.refresh_lock_path):
+                # A different process may have refreshed the shared item while we waited.
+                data = self.vault.load() or {}
+                if data.get("app_id") != self.app_id:
+                    raise LarkError("User authorization required: run setup_lark.py --authorize")
+                if data.get("expires_at", 0) > time.time() + 120:
+                    return data["access_token"]
+                return self._refresh_access_token(data)
+
+    def _refresh_access_token(self, data):
+        if not data.get("refresh_token"):
+            raise LarkError("User token expired without refresh token; authorize this application again")
+        try:
+            refreshed = self._oauth({"grant_type": "refresh_token", "refresh_token": data["refresh_token"]})
+        except LarkError:
+            # The other Windows batch may have rotated this refresh token first.
+            latest = self.vault.load() or {}
+            if (latest.get("app_id") == self.app_id and latest.get("access_token")
+                    and latest["access_token"] != data["access_token"]
+                    and latest.get("expires_at", 0) > time.time()):
+                return latest["access_token"]
+            raise
+        self._save_token(refreshed, data)
+        return self.vault.load()["access_token"]
 
 class LarkAPI:
     def __init__(self, env, *, auth=None, http=None):

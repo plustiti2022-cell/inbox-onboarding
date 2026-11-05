@@ -10,7 +10,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from model import MailAnalyzer, read_env
-from storage import ExcelRecordStore, MAIL_TABLE, PROGRESS_TABLE, SHANGHAI, load_mail_input
+from storage import ExcelRecordStore, MAIL_TABLE, PROGRESS_TABLE, SHANGHAI, TERMINAL_MAIL_STATUSES, load_mail_input
 from workflow import mail_time, process_pending
 
 ROOT = Path(__file__).resolve().parent
@@ -153,7 +153,8 @@ def main(argv=None, *, lock_lark=True) -> int:
         else:
             report["mail_records"] = len(store.list_records(MAIL_TABLE))
             report["progress_records"] = len(store.list_records(PROGRESS_TABLE))
-            report["remaining"] = sum(r["fields"].get("AI处理") != "AI已处理" for r in store.list_records(MAIL_TABLE))
+            report["remaining"] = sum(r["fields"].get("AI处理") not in TERMINAL_MAIL_STATUSES
+                                      for r in store.list_records(MAIL_TABLE))
         report["complete"] = report.get("failed", 0) == 0 and (analyzer is None or report["remaining"] == 0)
         report["run_finished"] = True
         print(json.dumps({key: value for key, value in report.items() if key != "items"}, ensure_ascii=False, indent=2), flush=True)

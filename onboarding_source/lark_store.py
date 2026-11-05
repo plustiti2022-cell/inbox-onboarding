@@ -4,7 +4,7 @@ import copy
 from disk_snapshot import DiskSnapshot, DiskRecords
 from datetime import datetime, timezone
 from lark_support import LarkAPI, LarkError
-from storage import LATEST_RECEIVED_TIME, MAIL_TABLE, PROGRESS_TABLE, MAIL_FIELDS, PROGRESS_FIELDS, SHANGHAI
+from storage import LATEST_RECEIVED_TIME, MAIL_TABLE, PROGRESS_TABLE, MAIL_FIELDS, PROGRESS_FIELDS, SHANGHAI, TERMINAL_MAIL_STATUSES
 
 def field_schema(table):
     names = MAIL_FIELDS if table == MAIL_TABLE else PROGRESS_FIELDS
@@ -101,7 +101,7 @@ class LarkRecordStore:
         if isinstance(records, DiskRecords):
             return records.pending_snapshot(mail_time, limit)
         pending = sorted((r for r in self.list_records(MAIL_TABLE)
-                          if r["fields"].get("AI处理") != "AI已处理"), key=mail_time)
+                          if r["fields"].get("AI处理") not in TERMINAL_MAIL_STATUSES), key=mail_time)
         if limit is not None:
             pending = pending[:limit]
         return len(pending), iter(pending)
@@ -119,7 +119,7 @@ class LarkRecordStore:
         mail = self.tables[MAIL_TABLE]
         return {"mail_records": len(mail), "progress_records": len(self.tables[PROGRESS_TABLE]),
                 "remaining": mail.pending_count() if isinstance(mail, DiskRecords) else
-                sum(r["fields"].get("AI处理") != "AI已处理" for r in mail)}
+                sum(r["fields"].get("AI处理") not in TERMINAL_MAIL_STATUSES for r in mail)}
 
     def create_record(self, table, fields):
         data = self.api.request("POST", self.path(table) + "/records", body={"fields": self.encode_fields(table, fields)})

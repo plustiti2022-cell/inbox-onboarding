@@ -65,7 +65,7 @@ def exercise(env):
     api = LarkAPI(env)
     before = LarkRecordStore(env)
     try:
-        assert all(r["fields"].get("AI处理") == "AI已处理" for r in before.list_records(MAIL_TABLE)), "Resolve real pending mail before acceptance"
+        assert before.record_counts()["remaining"] == 0, "Resolve real pending mail before acceptance"
         progress_rows = before.list_records(PROGRESS_TABLE)
         assert not any(r["fields"].get("客户名称", "").strip().casefold() == "evelyn hart" for r in progress_rows), "Choose a distinct fixture contact before acceptance"
         before_ids = {r["record_id"] for r in progress_rows}

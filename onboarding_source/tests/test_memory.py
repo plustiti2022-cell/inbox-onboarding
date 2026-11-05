@@ -19,6 +19,37 @@ class MemoryTests(unittest.TestCase):
         cloud.http = SimpleNamespace(session=SimpleNamespace(close=Mock()))
         return cloud
 
+    def test_manual_review_persists_and_is_skipped_on_restart(self):
+        cloud = self.cloud()
+        with self.subTest("initial disk-backed batch"):
+            store = LarkRecordStore(ENV, api=cloud, disk_backed=True)
+            try:
+                first = store.create_record(MAIL_TABLE, {"receivedDateTime": "2026-11-01T00:01:00Z"})
+                store.create_record(MAIL_TABLE, {"receivedDateTime": "2026-11-01T00:02:00Z"})
+                analyzer = Mock()
+                analyzer.analyze.side_effect = [
+                    result(company_name="", customer_name="", email=""), result(is_onboarding=False),
+                ]
+                report = process_pending(store, analyzer)
+                self.assertEqual((report["manual_review"], report["non_onboarding"], report["failed"]), (1, 1, 0))
+                fields = store.tables[MAIL_TABLE].get(first["record_id"])["fields"]
+                self.assertEqual((fields["AI处理"], fields["是否为开户邮件"]), ("人工核查", "是"))
+                self.assertIn("无法识别", fields["处理说明"])
+                self.assertEqual(store.record_counts()["remaining"], 0)
+                self.assertFalse(cloud.rows["progress"])
+            finally:
+                store.close()
+        for disk_backed in (False, True):
+            with self.subTest(restarted_disk_backed=disk_backed):
+                store = LarkRecordStore(ENV, api=cloud, disk_backed=disk_backed)
+                try:
+                    analyzer = Mock()
+                    self.assertEqual(process_pending(store, analyzer)["processed"], 0)
+                    self.assertEqual(store.record_counts()["remaining"], 0)
+                    analyzer.analyze.assert_not_called()
+                finally:
+                    store.close()
+
     def test_disk_queue_orders_pages_skips_done_and_defers_new_mail(self):
         cloud = self.cloud()
         original = LarkRecordStore(ENV, api=cloud)

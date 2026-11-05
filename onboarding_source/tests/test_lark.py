@@ -4,7 +4,9 @@ import sys
 import tempfile
 import time
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import Event
 from unittest.mock import Mock, call, patch
 from urllib.parse import parse_qs, urlsplit
 from uuid import UUID
@@ -224,6 +226,36 @@ class LarkTests(unittest.TestCase):
         self.assertEqual(http.body["grant_type"], "refresh_token")
         self.assertEqual(http.url, "https://open.larksuite.com/open-apis/authen/v2/oauth/token")
 
+    @unittest.skipUnless(sys.platform == "darwin", "macOS refresh lock")
+    def test_concurrent_workers_reuse_rotated_mac_token(self):
+        vault = Vault({"app_id": ENV["LARK_APP_ID"], "access_token": "old",
+                       "refresh_token": "old-refresh", "expires_at": 0})
+        refresh_started, second_read = Event(), Event()
+
+        def oauth(*args, **kwargs):
+            refresh_started.set()
+            if not second_read.wait(5):
+                raise AssertionError("Second worker did not see the expired token")
+            return {"access_token": "new", "refresh_token": "new-refresh"}
+
+        def load_for_second():
+            data = vault.load()
+            second_read.set()
+            return data
+
+        http = Mock(domain="https://open.larksuite.com", send=Mock(side_effect=oauth))
+        second_vault = Mock(load=Mock(side_effect=load_for_second), save=vault.save)
+        first = LarkAuth(ENV, http=http, vault=vault, pending=Vault())
+        second = LarkAuth(ENV, http=http, vault=second_vault, pending=Vault())
+        with tempfile.TemporaryDirectory() as directory, ThreadPoolExecutor(max_workers=2) as pool:
+            first.refresh_lock_path = second.refresh_lock_path = Path(directory) / "refresh.lock"
+            first_run = pool.submit(first.access_token)
+            self.assertTrue(refresh_started.wait(5))
+            second_run = pool.submit(second.access_token)
+            self.assertEqual(first_run.result(timeout=5), "new")
+            self.assertEqual(second_run.result(timeout=5), "new")
+        http.send.assert_called_once()
+
     def test_native_device_grant_saves_user_and_refresh_tokens(self):
         class HTTP:
             domain = "https://open.larksuite.com"
@@ -238,7 +270,6 @@ class LarkTests(unittest.TestCase):
         self.assertEqual(http.url, "https://open.larksuite.com/open-apis/authen/v2/oauth/token")
         self.assertEqual(http.fields["grant_type"], "urn:ietf:params:oauth:grant-type:device_code")
 
-    @unittest.skipUnless(sys.platform == "win32", "Windows lock")
     def test_busy_worker_lock_can_be_acquired_after_release(self):
         with tempfile.TemporaryDirectory() as directory, patch("lark_support.PROJECT", Path(directory)):
             first = LarkRunLock(ENV["LARK_APP_ID"])

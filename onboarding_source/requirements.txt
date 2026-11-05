@@ -1,3 +1,4 @@
 certifi
 requests>=2.25
 qrcode[pil]>=8.0
+pyobjc-framework-Security; sys_platform == "darwin"

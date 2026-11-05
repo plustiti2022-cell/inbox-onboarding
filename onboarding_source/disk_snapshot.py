@@ -5,6 +5,7 @@ import json
 import sqlite3
 import tempfile
 from pathlib import Path
+from storage import TERMINAL_MAIL_STATUSES
 
 
 class DiskSnapshot:
@@ -77,14 +78,15 @@ class DiskRecords:
 
     def pending_count(self):
         return self.db.execute("""SELECT COUNT(*) FROM records WHERE table_name=?
-            AND COALESCE(json_extract(fields, '$."AI处理"'), '') != 'AI已处理'""", (self.name,)).fetchone()[0]
+            AND COALESCE(json_extract(fields, '$."AI处理"'), '') NOT IN (?, ?)""",
+            (self.name, *TERMINAL_MAIL_STATUSES)).fetchone()[0]
 
     def pending_snapshot(self, time_key, limit=None):
         # Freeze IDs separately: status updates cannot shrink/reorder this queue.
         self.db.execute("DROP TABLE IF EXISTS pending_queue")
         self.db.execute("CREATE TABLE pending_queue (seq INTEGER PRIMARY KEY, record_id TEXT, received TEXT)")
         for record in self:
-            if record["fields"].get("AI处理") != "AI已处理":
+            if record["fields"].get("AI处理") not in TERMINAL_MAIL_STATUSES:
                 received = time_key(record).isoformat(timespec="microseconds")
                 self.db.execute("INSERT INTO pending_queue(record_id, received) VALUES (?, ?)",
                                 (record["record_id"], received))

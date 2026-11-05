@@ -17,6 +17,8 @@ from pathlib import Path
 from typing import Protocol
 
 MAIL_TABLE = "邮件信息表"
+MANUAL_REVIEW = "人工核查"
+TERMINAL_MAIL_STATUSES = ("AI已处理", MANUAL_REVIEW)
 PROGRESS_TABLE = "开户进度表"
 MAIL_FIELDS = [
     "internetMessageId", "conversationId", "receivedDateTime", "webLink", "hasAttachments",

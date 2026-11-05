@@ -5,7 +5,7 @@ import unicodedata
 from datetime import datetime, timezone
 
 from model import validate_result
-from storage import LATEST_RECEIVED_TIME, MAIL_TABLE, PROGRESS_TABLE, RecordStore
+from storage import LATEST_RECEIVED_TIME, MAIL_TABLE, MANUAL_REVIEW, PROGRESS_TABLE, TERMINAL_MAIL_STATUSES, RecordStore
 
 IDENTITY_FIELDS = {"公司名称": "company_name", "客户名称": "customer_name", "邮件": "email"}
 DEFAULT_HANDLER = "james.yang@hashkey.com"
@@ -46,15 +46,24 @@ def mail_time(record: dict) -> datetime:
     return time.astimezone(timezone.utc)
 
 
+class ManualReviewRequired(ValueError):
+    def __init__(self, message: str, reason: str):
+        super().__init__(message)
+        self.reason = reason
+
+
 def find_customer(records: list[dict], result: dict) -> dict | None:
     """Any nonblank same-field exact match counts. Never choose a conflicting row."""
     wanted = {field: normalized(result[key]) for field, key in IDENTITY_FIELDS.items() if normalized(result[key])}
     if not wanted:
-        raise ValueError("Onboarding mail has no identifiable company, customer name or email")
+        raise ManualReviewRequired("Onboarding mail has no identifiable company, customer name or email",
+                                   "无法识别开户公司、客户姓名或客户邮箱。")
     matches = [record for record in records if any(
         normalized(record["fields"].get(field)) == value for field, value in wanted.items())]
     if len(matches) > 1:
-        raise ValueError("Customer match conflicts across records: " + ", ".join(r["record_id"] for r in matches))
+        record_ids = ", ".join(r["record_id"] for r in matches)
+        raise ManualReviewRequired("Customer match conflicts across records: " + record_ids,
+                                   f"命中多笔开户进度记录（{record_ids}）。")
     return matches[0] if matches else None
 
 
@@ -78,7 +87,7 @@ def process_pending(store: RecordStore, analyzer, limit: int | None = None, on_e
     if hasattr(store, "pending_snapshot"):
         total, pending = store.pending_snapshot(limit)
     else:
-        pending = [r for r in store.list_records(MAIL_TABLE) if r["fields"].get("AI处理") != "AI已处理"]
+        pending = [r for r in store.list_records(MAIL_TABLE) if r["fields"].get("AI处理") not in TERMINAL_MAIL_STATUSES]
         # Validate/sort before making updates; even old descending exports work.
         pending.sort(key=mail_time)
         if limit is not None:
@@ -86,7 +95,7 @@ def process_pending(store: RecordStore, analyzer, limit: int | None = None, on_e
         total = len(pending)
     if report is None:
         report = {}
-    report.update(processed=0, onboarding=0, non_onboarding=0, created=0, updated=0, failed=0)
+    report.update(processed=0, onboarding=0, non_onboarding=0, created=0, updated=0, manual_review=0, failed=0)
     if retain_items:
         report["items"] = []
     for index, record in enumerate(pending, 1):
@@ -102,26 +111,33 @@ def process_pending(store: RecordStore, analyzer, limit: int | None = None, on_e
             known = [{field: r["fields"].get(field, "") for field in IDENTITY_FIELDS} for r in progress]
             result = validate_result(analyzer.analyze(record["fields"], known))
             event["result"] = result
+            status, reason = "AI已处理", result["reason"]
             if result["is_onboarding"]:
-                message_id = event["internetMessageId"]
-                if not isinstance(message_id, str) or not message_id.strip():
-                    raise ValueError("Onboarding mail is missing internetMessageId")
-                target = find_customer(progress, result)
-                result["handler"] = select_handler(record["fields"])
-                patch = progress_patch(result)
-                patch["internetMessageId"] = message_id
-                patch[LATEST_RECEIVED_TIME] = record["fields"]["receivedDateTime"]
-                if target is None:
-                    target = store.create_record(PROGRESS_TABLE, patch)
-                    event["action"] = "created"
+                try:
+                    target = find_customer(progress, result)
+                except ManualReviewRequired as review:
+                    status = MANUAL_REVIEW
+                    reason = f"{review.reason} {reason}"
+                    event["action"] = "manual_review"
                 else:
-                    store.update_record(PROGRESS_TABLE, target["record_id"], patch)
-                    event["action"] = "updated"
-                event["progress_record_id"] = target["record_id"]
+                    message_id = event["internetMessageId"]
+                    if not isinstance(message_id, str) or not message_id.strip():
+                        raise ValueError("Onboarding mail is missing internetMessageId")
+                    result["handler"] = select_handler(record["fields"])
+                    patch = progress_patch(result)
+                    patch["internetMessageId"] = message_id
+                    patch[LATEST_RECEIVED_TIME] = record["fields"]["receivedDateTime"]
+                    if target is None:
+                        target = store.create_record(PROGRESS_TABLE, patch)
+                        event["action"] = "created"
+                    else:
+                        store.update_record(PROGRESS_TABLE, target["record_id"], patch)
+                        event["action"] = "updated"
+                    event["progress_record_id"] = target["record_id"]
             else:
                 event["action"] = "non_onboarding"
             store.update_record(MAIL_TABLE, mail_id, {
-                "AI处理": "AI已处理", "是否为开户邮件": "是" if result["is_onboarding"] else "否", "处理说明": result["reason"],
+                "AI处理": status, "是否为开户邮件": "是" if result["is_onboarding"] else "否", "处理说明": reason,
             })
         except (ValueError, RuntimeError) as error:
             report["failed"] += 1
