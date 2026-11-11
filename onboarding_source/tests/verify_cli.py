@@ -45,11 +45,11 @@ def verify(output):
                 self.wfile.write(body)
                 return
             if subject == "1":
-                answer = result(blocker="缺地址证明", handler="James Yang", ball_in_court="球在客户")
+                answer = result(卡点="缺地址证明", 球在谁方="球在客户")
             elif subject == "2":
-                answer = result(company_name="", customer_name="", summary="客户已提交附件，等待核对。")
+                answer = result(公司名称="", 客户名称="", 简要描述="客户已提交附件，等待核对。")
             else:
-                answer = result(is_onboarding=False, company_name="", customer_name="", email="", ball_in_court="", summary=None, reason="活动邀请")
+                answer = result(is_onboarding=False, 公司名称=None, 客户名称=None, 邮件=None, 球在谁方=None, 简要描述=None)
             body = json.dumps({"choices": [{"finish_reason": "stop", "message": {"content": json.dumps(answer, ensure_ascii=False)}}]}, ensure_ascii=False).encode()
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
@@ -84,7 +84,8 @@ def verify(output):
         headers, row = sheets[PROGRESS_TABLE]
         progress = dict(zip(headers, row))
         assert progress["邮件"] == "alice@northstar.example"
-        assert progress["卡点"] == "缺地址证明" and progress["经办人"] == "james.yang"
+        assert progress["卡点"] == "缺地址证明" and not progress["经办人"]
+        assert progress["internetMessageId"] == "人工修改"
         assert progress["球在谁方"] == "球在我方"
         assert progress["简要描述"] == "客户已提交附件，等待核对。"
         mail_rows = sheets[MAIL_TABLE]
@@ -114,7 +115,7 @@ def verify(output):
         resumed = read_xlsx(failure_workbook)[PROGRESS_TABLE]
         assert dict(zip(resumed[0], resumed[1]))["简要描述"] == "客户已提交附件，等待核对。"
         report = {"passed": True, "api": "loopback mock, not live AI", "calls": calls,
-                  "verified": ["CLI JSON import", "actual HTTP request/response", "JSON mode", "identity-only context", "limit", "resume", "no repeat calls", "two-table XLSX saved/reopened", "preserve blocker and use handler fallback", "email-only update", "negative classification", "HTTP failure stops later mail", "failed mail retries before later mail"]}
+                  "verified": ["CLI JSON import", "actual HTTP request/response", "seven-key JSON mode", "identity-only context", "limit", "resume", "no repeat calls", "two-table XLSX saved/reopened", "preserve blocker and handler", "manual source marker", "email-only update", "negative classification", "HTTP failure stops later mail", "failed mail retries before later mail"]}
         (output / "verification.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
         print(json.dumps(report, ensure_ascii=False))
     finally:

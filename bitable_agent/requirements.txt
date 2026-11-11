@@ -1,0 +1,2 @@
+-r ../onboarding_source/requirements.txt
+lark-oapi==1.7.5

@@ -35,30 +35,25 @@ def read_env(path: Path) -> dict[str, str]:
     return result
 
 
+PROGRESS_RESULT_FIELDS = ("公司名称", "客户名称", "邮件", "球在谁方", "卡点", "简要描述")
+
+
 def validate_result(value: object) -> dict:
     if not isinstance(value, dict):
         raise ValueError("AI output must be a JSON object")
-    string_fields = ("company_name", "customer_name", "email", "ball_in_court", "reason")
-    for key in string_fields:
-        if not isinstance(value.get(key), str):
-            raise ValueError(f"Invalid AI string field: {key}")
-        value[key] = value[key].strip()
-    for key in ("is_onboarding", "blocker_resolved"):
-        if type(value.get(key)) is not bool:
-            raise ValueError(f"Invalid AI boolean field: {key}")
-    for key in ("blocker", "summary", "handler"):
-        if key not in value or (value[key] is not None and not isinstance(value[key], str)):
+    if set(value) != {"is_onboarding", *PROGRESS_RESULT_FIELDS}:
+        raise ValueError("AI output must contain only is_onboarding and the six progress fields")
+    if type(value["is_onboarding"]) is not bool:
+        raise ValueError("Invalid AI boolean field: is_onboarding")
+    for key in PROGRESS_RESULT_FIELDS:
+        if value[key] is not None and not isinstance(value[key], str):
             raise ValueError(f"Invalid AI nullable text field: {key}")
         if isinstance(value[key], str):
-            value[key] = value[key].strip() or None
-    if value["ball_in_court"] not in ("", "球在我方", "球在客户", "球在合规"):
-        raise ValueError("Invalid ball_in_court")
-    if value["email"] and not re.fullmatch(r"[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+", value["email"]):
+            value[key] = value[key].strip()
+    if value["球在谁方"] not in (None, "", "球在我方", "球在客户", "球在合规"):
+        raise ValueError("Invalid 球在谁方")
+    if value["邮件"] and not re.fullmatch(r"[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+", value["邮件"]):
         raise ValueError("AI email must contain one actual email address")
-    if value["blocker_resolved"] and value["blocker"]:
-        raise ValueError("blocker_resolved conflicts with an outstanding blocker")
-    if value["is_onboarding"] and not value["summary"]:
-        raise ValueError("Onboarding output must include a summary")
     return value
 
 

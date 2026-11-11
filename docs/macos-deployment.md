@@ -8,6 +8,19 @@
 
 同日 10:09（香港時間）以新版設定處理 55 封待辦，失敗 0 封。10:43 啟用工作流 2 後，透過 LaunchAgent 立即觸發一次，退出碼為 0，當輪待辦為 0。抓信的部署及交接紀錄見 [工作流 1 部署紀錄](workflow-1-deployment.md)。
 
+## 對話工作流
+
+對話工作流部署在 `~/Library/Application Support/inbox-onboarding/conversation_workflow/`，與 `mail_export_source/` 和 `onboarding_source/` 平級。資料夾內有 `bitable_agent/` 的程式與提示詞、`onboarding_source/` 的共用模組副本、專用 `.venv/`、`outputs/bitable_agent/bot.log` 及 `.runtime/bitable_bot/` 的消息去重資料庫。
+
+它是常駐 WebSocket 程序，使用部署根目錄的 `.env` 和現有 Lark 使用者授權。要手動啟動，先停止目前的對話程序，再執行：
+
+```sh
+cd "$HOME/Library/Application Support/inbox-onboarding/conversation_workflow"
+.venv/bin/python -B -m bitable_agent.bot --env ../.env --auth-project ..
+```
+
+更新部署時，從專案同步 `bitable_agent/` 及 `onboarding_source/` 中的 `lark_support.py`、`model.py`、`storage.py`、`workflow.py` 和 `requirements.txt` 到上述資料夾。需要更新依賴時，在對話資料夾執行 `.venv/bin/python -m pip install -r bitable_agent/requirements.txt`，再重啟程序。
+
 ## 安裝
 
 從 Git 專案根目錄執行。需要 Python 3.11。部署目錄位於使用者的 Library，供背景工作從固定路徑啟動。

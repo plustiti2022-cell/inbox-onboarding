@@ -4,32 +4,10 @@ from __future__ import annotations
 import unicodedata
 from datetime import datetime, timezone
 
-from model import validate_result
-from storage import LATEST_RECEIVED_TIME, MAIL_TABLE, MANUAL_REVIEW, PROGRESS_TABLE, TERMINAL_MAIL_STATUSES, RecordStore
+from model import PROGRESS_RESULT_FIELDS, validate_result
+from storage import LATEST_RECEIVED_TIME, MAIL_TABLE, MANUAL_REVIEW, PROGRESS_TABLE, SHANGHAI, TERMINAL_MAIL_STATUSES, RecordStore
 
-IDENTITY_FIELDS = {"公司名称": "company_name", "客户名称": "customer_name", "邮件": "email"}
-DEFAULT_HANDLER = "james.yang@hashkey.com"
-HANDLER_EMAILS = {
-    DEFAULT_HANDLER,
-    "prance.wang@hashkey.com",
-    "zishan.feng@hashkey.com",
-    "jx.yao@hashkey.com",
-    "ingrid.lin@hashkey.com",
-    "kathy.sun@hashkey.com",
-    "bruce.li@hashkey.com",
-    "fery.li@hashkey.com",
-    "meilin.wu@hashkey.com",
-}
-
-
-def select_handler(mail: dict) -> str:
-    for field in ("from.emailAddress.address", "toRecipients.addresses", "ccRecipients.addresses"):
-        addresses = (mail.get(field) or "").casefold().split(",")
-        matches = [address.strip() for address in addresses if address.strip() in HANDLER_EMAILS]
-        if matches:
-            selected = next((address for address in matches if address != DEFAULT_HANDLER), matches[0])
-            return selected.split("@", 1)[0]
-    return DEFAULT_HANDLER.split("@", 1)[0]
+IDENTITY_FIELDS = ("公司名称", "客户名称", "邮件")
 
 
 def normalized(value: str) -> str:
@@ -54,7 +32,7 @@ class ManualReviewRequired(ValueError):
 
 def find_customer(records: list[dict], result: dict) -> dict | None:
     """Any nonblank same-field exact match counts. Never choose a conflicting row."""
-    wanted = {field: normalized(result[key]) for field, key in IDENTITY_FIELDS.items() if normalized(result[key])}
+    wanted = {field: normalized(result[field]) for field in IDENTITY_FIELDS if normalized(result[field])}
     if not wanted:
         raise ManualReviewRequired("Onboarding mail has no identifiable company, customer name or email",
                                    "无法识别开户公司、客户姓名或客户邮箱。")
@@ -67,18 +45,18 @@ def find_customer(records: list[dict], result: dict) -> dict | None:
     return matches[0] if matches else None
 
 
-def progress_patch(result: dict) -> dict:
-    patch = {field: result[key] for field, key in IDENTITY_FIELDS.items() if result[key]}
-    if result["ball_in_court"]:
-        patch["球在谁方"] = result["ball_in_court"]
-    if result["summary"] is not None:
-        patch["简要描述"] = result["summary"]
-    if result["handler"] is not None:
-        patch["经办人"] = result["handler"]
-    if result["blocker_resolved"]:
-        patch["卡点"] = ""
-    elif result["blocker"] is not None:
-        patch["卡点"] = result["blocker"]
+def progress_patch(result: dict, current: dict | None = None) -> dict:
+    patch = {}
+    for field in PROGRESS_RESULT_FIELDS:
+        value = result[field]
+        if value is None:
+            continue
+        if field in IDENTITY_FIELDS:
+            if not value or (current is not None and normalized(value) == normalized(current.get(field))):
+                continue
+        elif not value and field != "卡点":
+            continue
+        patch[field] = value
     return patch
 
 
@@ -111,7 +89,8 @@ def process_pending(store: RecordStore, analyzer, limit: int | None = None, on_e
             known = [{field: r["fields"].get(field, "") for field in IDENTITY_FIELDS} for r in progress]
             result = validate_result(analyzer.analyze(record["fields"], known))
             event["result"] = result
-            status, reason = "AI已处理", result["reason"]
+            status = "AI已处理"
+            reason = "开户邮件" if result["is_onboarding"] else "非开户邮件"
             if result["is_onboarding"]:
                 try:
                     target = find_customer(progress, result)
@@ -120,13 +99,9 @@ def process_pending(store: RecordStore, analyzer, limit: int | None = None, on_e
                     reason = f"{review.reason} {reason}"
                     event["action"] = "manual_review"
                 else:
-                    message_id = event["internetMessageId"]
-                    if not isinstance(message_id, str) or not message_id.strip():
-                        raise ValueError("Onboarding mail is missing internetMessageId")
-                    result["handler"] = select_handler(record["fields"])
-                    patch = progress_patch(result)
-                    patch["internetMessageId"] = message_id
-                    patch[LATEST_RECEIVED_TIME] = record["fields"]["receivedDateTime"]
+                    patch = progress_patch(result, target["fields"] if target else None)
+                    patch["internetMessageId"] = "人工修改"
+                    patch[LATEST_RECEIVED_TIME] = datetime.now(SHANGHAI).isoformat(timespec="seconds")
                     if target is None:
                         target = store.create_record(PROGRESS_TABLE, patch)
                         event["action"] = "created"

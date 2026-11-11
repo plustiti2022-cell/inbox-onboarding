@@ -28,11 +28,11 @@ def verify(directory):
     class Analyzer:
         def analyze(self, mail, known):
             if mail["subject"] == "1":
-                return result(blocker="缺地址证明", handler="James Yang")
+                return result(卡点="缺地址证明")
             if mail["subject"] == "2":
                 # Only name matches: company/email were absent, never clear them.
-                return result(company_name="", email="", summary="附件已提交，待审核。")
-            return result(is_onboarding=False, company_name="", customer_name="", email="", ball_in_court="", summary=None, reason="内部人事通知")
+                return result(公司名称="", 邮件="", 简要描述="附件已提交，待审核。")
+            return result(is_onboarding=False, 公司名称=None, 客户名称=None, 邮件=None, 球在谁方=None, 简要描述=None)
 
     try:
         report = process_pending(store, Analyzer())
@@ -47,7 +47,8 @@ def verify(directory):
         assert len(after) == 1
         fields = after[0]["fields"]
         assert fields["公司名称"] == "North Star Limited" and fields["邮件"] == "alice@northstar.example"
-        assert fields["卡点"] == "缺地址证明" and fields["经办人"] == "james.yang"
+        assert fields["卡点"] == "缺地址证明" and not fields["经办人"]
+        assert fields["internetMessageId"] == "人工修改"
         assert fields["简要描述"] == "附件已提交，待审核。"
         mails = reopened.list_records(MAIL_TABLE)
         assert all(r["fields"]["AI处理"] == "AI已处理" for r in mails)
@@ -61,7 +62,7 @@ def verify(directory):
 
         class Resolved:
             def analyze(self, mail, known):
-                return result(blocker_resolved=True, summary="审核明确确认地址证明通过。")
+                return result(卡点="", 简要描述="审核明确确认地址证明通过。")
 
         process_pending(reopened, Resolved())
     finally:
@@ -75,7 +76,7 @@ def verify(directory):
     source = load_mail_input(workbook)
     assert len(source) == 4
     outcome = {"passed": True, "first_run": {k: v for k, v in report.items() if k != "items"},
-               "verified": ["two tables", "create/update/negative", "name-only OR matching", "stable record IDs", "preserve old blocker and use handler fallback", "explicit resolution", "literal equals text", "booleans", "UTC dates", "resume", "XLSX mail input"]}
+               "verified": ["two tables", "create/update/negative", "name-only OR matching", "stable record IDs", "preserve old blocker and handler", "manual source marker", "explicit resolution", "literal equals text", "booleans", "UTC dates", "resume", "XLSX mail input"]}
     (directory / "verification.json").write_text(json.dumps(outcome, ensure_ascii=False, indent=2), encoding="utf-8")
     print(json.dumps(outcome, ensure_ascii=False))
 

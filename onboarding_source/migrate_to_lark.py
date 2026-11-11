@@ -39,8 +39,8 @@ def main(argv=None):
                     continue
                 fields = row["fields"]
                 if table == PROGRESS_TABLE:
-                    match = find_customer(cloud, {"company_name": fields.get("公司名称", ""),
-                                                  "customer_name": fields.get("客户名称", ""), "email": fields.get("邮件", "")})
+                    match = find_customer(cloud, {name: fields.get(name, "")
+                                                  for name in ("公司名称", "客户名称", "邮件")})
                     matches = [match] if match else []
                 else:
                     message_id = fields.get("internetMessageId")

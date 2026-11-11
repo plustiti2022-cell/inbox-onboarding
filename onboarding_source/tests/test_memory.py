@@ -28,7 +28,7 @@ class MemoryTests(unittest.TestCase):
                 store.create_record(MAIL_TABLE, {"receivedDateTime": "2026-11-01T00:02:00Z"})
                 analyzer = Mock()
                 analyzer.analyze.side_effect = [
-                    result(company_name="", customer_name="", email=""), result(is_onboarding=False),
+                    result(公司名称="", 客户名称="", 邮件=""), result(is_onboarding=False),
                 ]
                 report = process_pending(store, analyzer)
                 self.assertEqual((report["manual_review"], report["non_onboarding"], report["failed"]), (1, 1, 0))
@@ -78,7 +78,7 @@ class MemoryTests(unittest.TestCase):
             else:
                 self.assertEqual(len(known), 1)
                 self.assertEqual(set(known[0]), {"公司名称", "客户名称", "邮件"})
-            return result(summary=mail["subject"])
+            return result(简要描述=mail["subject"])
 
         # Production must not secretly reconstruct either full table.
         with patch.object(store, "list_records", side_effect=AssertionError("full-table copy")):

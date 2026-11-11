@@ -33,10 +33,10 @@ def verify(output: Path, model: str | None = None):
                 "ccRecipients.addresses": cc, "subject": "North Star Limited 开户补件跟进",
                 "body.content（去除html）": "跟进 North Star Limited 的开户地址证明补件。客户联系人 Alice Chen <alice@northstar.example>，我方对接人为 James Yang。请收件人安排下一步处理。"}
         result = analyzer.analyze(mail, [])
-        passed = result["is_onboarding"] and result["ball_in_court"] == expected and result["email"] == client
+        passed = result["is_onboarding"] and result["球在谁方"] == expected and result["邮件"] == client
         report["cases"].append({"case": name, "expected": expected, "result": result, "passed": passed})
         report["passed"] &= passed
-        print(json.dumps({"case": name, "passed": passed, "ball": result["ball_in_court"]}, ensure_ascii=False), flush=True)
+        print(json.dumps({"case": name, "passed": passed, "ball": result["球在谁方"]}, ensure_ascii=False), flush=True)
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     for subject, body in [("季度活动邀请", "邀请参加下周行业交流酒会。"), ("开通EDDA白名单权限", "客户已完成开户，现申请开通 EDDA 白名单充值权限。")]:

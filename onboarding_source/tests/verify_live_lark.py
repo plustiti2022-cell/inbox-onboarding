@@ -98,7 +98,7 @@ def exercise(env):
                     print(json.dumps({"live_case": expected, "errors": [x.get("error") for x in report["items"]]}, ensure_ascii=False), flush=True)
                 assert report["failed"] == 0 and len(report["items"]) == 1, "Live processing failed"
                 item = report["items"][0]
-                assert item["action"] == expected, "Unexpected live action: " + item["action"] + "; " + item["result"]["reason"]
+                assert item["action"] == expected, "Unexpected live action: " + item["action"] + "; " + json.dumps(item["result"], ensure_ascii=False)
                 if expected == "created":
                     progress_id = item["progress_record_id"]
                 if expected == "updated":

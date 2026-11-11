@@ -5,6 +5,7 @@ import tempfile
 import time
 import unittest
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
 from pathlib import Path
 from threading import Event
 from unittest.mock import Mock, call, patch
@@ -187,11 +188,39 @@ class LarkTests(unittest.TestCase):
                 first = process_pending(store, Analyzer())
                 self.assertEqual(first["failed"], 1)
                 self.assertEqual(len(cloud.rows["progress"]), 1)
-                self.assertEqual(cloud.rows["progress"][0]["fields"]["internetMessageId"], "<source@example.invalid>")
+                self.assertEqual(cloud.rows["progress"][0]["fields"]["internetMessageId"], "人工修改")
                 second = process_pending(LarkRecordStore(ENV, api=cloud), Analyzer())
                 self.assertEqual(second["updated"], 1)
                 self.assertEqual(len(cloud.rows["progress"]), 1)
                 self.assertEqual(cloud.rows["mail"][0]["fields"]["AI处理"], "AI已处理")
+
+    def test_six_field_update_preserves_identity_and_encodes_manual_metadata(self):
+        now = datetime.fromisoformat("2026-11-10T15:12:34+08:00")
+        for disk_backed in (False, True):
+            with self.subTest(disk_backed=disk_backed):
+                cloud = Cloud()
+                cloud.http = Mock()
+                store = LarkRecordStore(ENV, api=cloud, disk_backed=disk_backed)
+                self.addCleanup(store.close)
+                store.create_record(PROGRESS_TABLE, {
+                    "公司名称": "North Star Limited", "客户名称": "Alice Chen", "邮件": "alice@northstar.example",
+                    "卡点": "缺地址证明", "简要描述": "等待补件", "经办人": "original.handler"})
+                store.create_record(MAIL_TABLE, {"receivedDateTime": "2026-11-03T00:00:00Z"})
+                analyzer = Mock()
+                analyzer.analyze.return_value = result(公司名称="Ｎorth Star Limited", 邮件=None,
+                                                       球在谁方=None, 卡点="", 简要描述=None)
+                with patch.object(cloud, "request", wraps=cloud.request) as request, \
+                        patch("workflow.datetime", wraps=datetime) as clock:
+                    clock.now.return_value = now
+                    report = process_pending(store, analyzer)
+                self.assertEqual((report["updated"], report["failed"]), (1, 0))
+                self.assertEqual(request.call_args_list[0].kwargs["body"], {"fields": {
+                    "卡点": None, "internetMessageId": "人工修改", "最新收件时间": int(now.timestamp() * 1000)}})
+                progress = cloud.rows["progress"][0]["fields"]
+                self.assertEqual(progress["公司名称"], "North Star Limited")
+                self.assertEqual(progress["简要描述"], "等待补件")
+                self.assertEqual(progress["经办人"], "original.handler")
+                self.assertIsNone(progress["卡点"])
 
     def test_events_ignore_own_status_writes_and_other_tables(self):
         base = {"file_token": "base", "table_id": "mail", "action_list": [{"action": "record_edited", "after_value": [{"field_id": "status", "field_value": "AI已处理"}]}]}
