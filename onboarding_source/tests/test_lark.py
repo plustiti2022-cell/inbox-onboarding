@@ -188,13 +188,13 @@ class LarkTests(unittest.TestCase):
                 first = process_pending(store, Analyzer())
                 self.assertEqual(first["failed"], 1)
                 self.assertEqual(len(cloud.rows["progress"]), 1)
-                self.assertEqual(cloud.rows["progress"][0]["fields"]["internetMessageId"], "人工修改")
+                self.assertEqual(cloud.rows["progress"][0]["fields"]["internetMessageId"], "<source@example.invalid>")
                 second = process_pending(LarkRecordStore(ENV, api=cloud), Analyzer())
                 self.assertEqual(second["updated"], 1)
                 self.assertEqual(len(cloud.rows["progress"]), 1)
                 self.assertEqual(cloud.rows["mail"][0]["fields"]["AI处理"], "AI已处理")
 
-    def test_six_field_update_preserves_identity_and_encodes_manual_metadata(self):
+    def test_six_field_update_preserves_identity_and_encodes_mail_metadata(self):
         now = datetime.fromisoformat("2026-11-10T15:12:34+08:00")
         for disk_backed in (False, True):
             with self.subTest(disk_backed=disk_backed):
@@ -205,7 +205,8 @@ class LarkTests(unittest.TestCase):
                 store.create_record(PROGRESS_TABLE, {
                     "公司名称": "North Star Limited", "客户名称": "Alice Chen", "邮件": "alice@northstar.example",
                     "卡点": "缺地址证明", "简要描述": "等待补件", "经办人": "original.handler"})
-                store.create_record(MAIL_TABLE, {"receivedDateTime": "2026-11-03T00:00:00Z"})
+                store.create_record(MAIL_TABLE, {"receivedDateTime": "2026-11-03T00:00:00Z",
+                                                 "internetMessageId": "<source@example.invalid>"})
                 analyzer = Mock()
                 analyzer.analyze.return_value = result(公司名称="Ｎorth Star Limited", 邮件=None,
                                                        球在谁方=None, 卡点="", 简要描述=None)
@@ -215,7 +216,8 @@ class LarkTests(unittest.TestCase):
                     report = process_pending(store, analyzer)
                 self.assertEqual((report["updated"], report["failed"]), (1, 0))
                 self.assertEqual(request.call_args_list[0].kwargs["body"], {"fields": {
-                    "卡点": None, "internetMessageId": "人工修改", "最新收件时间": int(now.timestamp() * 1000)}})
+                    "卡点": None, "internetMessageId": "<source@example.invalid>",
+                    "最新收件时间": int(now.timestamp() * 1000)}})
                 progress = cloud.rows["progress"][0]["fields"]
                 self.assertEqual(progress["公司名称"], "North Star Limited")
                 self.assertEqual(progress["简要描述"], "等待补件")

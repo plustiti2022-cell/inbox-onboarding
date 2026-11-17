@@ -85,7 +85,7 @@ def verify(output):
         progress = dict(zip(headers, row))
         assert progress["邮件"] == "alice@northstar.example"
         assert progress["卡点"] == "缺地址证明" and not progress["经办人"]
-        assert progress["internetMessageId"] == "人工修改"
+        assert progress["internetMessageId"] == "<2@example.com>"
         assert progress["球在谁方"] == "球在我方"
         assert progress["简要描述"] == "客户已提交附件，等待核对。"
         mail_rows = sheets[MAIL_TABLE]
@@ -115,7 +115,7 @@ def verify(output):
         resumed = read_xlsx(failure_workbook)[PROGRESS_TABLE]
         assert dict(zip(resumed[0], resumed[1]))["简要描述"] == "客户已提交附件，等待核对。"
         report = {"passed": True, "api": "loopback mock, not live AI", "calls": calls,
-                  "verified": ["CLI JSON import", "actual HTTP request/response", "seven-key JSON mode", "identity-only context", "limit", "resume", "no repeat calls", "two-table XLSX saved/reopened", "preserve blocker and handler", "manual source marker", "email-only update", "negative classification", "HTTP failure stops later mail", "failed mail retries before later mail"]}
+                  "verified": ["CLI JSON import", "actual HTTP request/response", "seven-key JSON mode", "identity-only context", "limit", "resume", "no repeat calls", "two-table XLSX saved/reopened", "preserve blocker and handler", "source mail ID", "email-only update", "negative classification", "HTTP failure stops later mail", "failed mail retries before later mail"]}
         (output / "verification.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
         print(json.dumps(report, ensure_ascii=False))
     finally:

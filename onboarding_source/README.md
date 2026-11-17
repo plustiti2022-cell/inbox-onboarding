@@ -77,7 +77,7 @@ AI 程序处理本轮读取到的待办快照，包括空白、未完成和失�
 | 公司名称 | 客户名称 | 邮件 | 球在谁方 | 卡点 | 简要描述 | 经办人 | 最新收件时间 | internetMessageId |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 
-每次新增或更新进度时，「最新收件时间」写入当次实际写入的北京时间（UTC+8），`internetMessageId` 固定写入「人工修改」。字段名称保留原样；邮件信息表中的原始邮件 ID 和收件时间继续保留。给已有 Base 补建 `internetMessageId` 可运行 `.venv\Scripts\python.exe onboarding_source\setup_lark.py --add-progress-message-id`。
+邮件流程新增或更新进度时，`internetMessageId` 写入本次来源邮件的 ID。来源 ID 缺失时，邮件标记为「AI失败」，不写入开户进度。只有 Lark 对话 agent 执行修改时，才写入「人工修改」；之后若有邮件再次更新同一条进度，该列写回新邮件的 ID。「最新收件时间」仍写入当次实际写入的北京时间（UTC+8）。给已有 Base 补建 `internetMessageId` 可运行 `.venv\Scripts\python.exe onboarding_source\setup_lark.py --add-progress-message-id`。
 
 经办人保留原值，不由本流程修改。日期使用原生日期字段，传入毫秒时间戳，读取后还原带时区的 ISO 时间；是否有附件使用布尔字段，其余默认文本字段。
 
