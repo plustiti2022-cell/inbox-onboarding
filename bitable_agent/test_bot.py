@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from .bot import BotClient, ChatHandler, main
+from .bot import BotClient, ChatHandler, LarkError, main
 from .tools import BitableTools
 from .update import ManualUpdater
 
@@ -63,6 +63,12 @@ class UpdateTests(unittest.TestCase):
         self.assertEqual(fields["卡点"], "")
         self.assertNotIn("简要描述", fields)
 
+    def test_confirmed_update_records_the_sender_name(self):
+        result = self.updater.run("修改ABC公司的摘要", editor_name="李小明")
+        self.assertTrue(result.startswith("已更新"))
+        fields = self.tools.update_record.call_args.args[2]
+        self.assertEqual(fields["internetMessageId"], "人工修改（李小明）")
+
     def test_ambiguous_missing_non_onboarding_and_no_changes_never_write(self):
         for model_result, records in (
             (answer(), self.records + [{"record_id": "rec2", "fields": {"公司名称": "ABC公司"}}]),
@@ -93,6 +99,7 @@ class ChatTests(unittest.TestCase):
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
         self.bot, self.updater = Mock(), Mock()
+        self.bot.sender_name.return_value = ""
         self.updater.run.return_value = "已更新 ABC公司：简要描述 → 等待合规审核"
         self.database = Path(self.directory.name) / "messages.sqlite3"
         self.handler = ChatHandler("app", "owner", self.updater, self.bot, self.database)
@@ -129,6 +136,7 @@ class ChatTests(unittest.TestCase):
         self.flush()
         self.updater.run.assert_not_called()
         self.bot.reply.assert_not_called()
+        self.bot.sender_name.assert_not_called()
 
     def test_tenant_access_accepts_internal_dms_and_blocks_external_or_non_private_messages(self):
         self.handler.close()
@@ -151,9 +159,20 @@ class ChatTests(unittest.TestCase):
         self.updater.run.assert_not_called()
         self.bot.reply.assert_not_called()
 
+        self.bot.sender_name.return_value = "李小明"
         self.handler.receive(private)
         self.flush()
         self.updater.run.assert_called_once()
+        self.bot.sender_name.assert_called_once_with("coworker")
+        self.assertEqual(self.updater.run.call_args.kwargs["editor_name"], "李小明")
+        self.bot.reply.assert_called_once_with("om1", self.updater.run.return_value)
+
+    def test_missing_directory_permission_does_not_block_update(self):
+        self.bot.sender_name.side_effect = LarkError("Missing contact scope", 99991672)
+        self.handler.receive(event())
+        self.flush()
+        self.updater.run.assert_called_once()
+        self.assertEqual(self.updater.run.call_args.kwargs["editor_name"], "")
         self.bot.reply.assert_called_once_with("om1", self.updater.run.return_value)
 
     def test_reply_failure_retries_reply_without_replaying_update(self):

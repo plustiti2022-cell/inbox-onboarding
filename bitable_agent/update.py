@@ -15,7 +15,7 @@ class ManualUpdater:
         self.client, self.tools = client, tools
         self.prompt = Path(__file__).with_name("update_prompt.txt").read_text(encoding="utf-8")
 
-    def run(self, instruction, *, on_event=None):
+    def run(self, instruction, *, editor_name="", on_event=None):
         def trace(event, **details):
             if on_event:
                 on_event(event, **details)
@@ -50,7 +50,7 @@ class ManualUpdater:
             return "未更新：沒有新的修改內容，原資料已保留。"
         updates = dict(fields)
         fields[LATEST_RECEIVED_TIME] = datetime.now(SHANGHAI).isoformat(timespec="seconds")
-        fields["internetMessageId"] = "人工修改"
+        fields["internetMessageId"] = f"人工修改（{editor_name}）" if editor_name else "人工修改"
         trace("update_prepared", record_id=target["record_id"], fields=fields)
         try:
             self.tools.update_record(PROGRESS_TABLE, target["record_id"], fields)

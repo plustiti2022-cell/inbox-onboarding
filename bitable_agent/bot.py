@@ -61,6 +61,13 @@ class BotClient:
         return {"bot_name": info["bot"]["app_name"], "missing_scopes": missing,
                 "required_event": "im.message.receive_v1", "transport": "websocket"}
 
+    def sender_name(self, open_id):
+        path = f"/open-apis/contact/v3/users/{quote(open_id, safe='')}?user_id_type=open_id"
+        result = self.request("GET", path)
+        user = (result.get("data") or {}).get("user") or {}
+        name = user.get("name")
+        return name.strip() if isinstance(name, str) else ""
+
     def reply(self, message_id, text):
         result = self.request("POST", f"/open-apis/im/v1/messages/{quote(message_id, safe='')}/reply", body={
             "msg_type": "text", "content": json.dumps({"text": text[:20000]}, ensure_ascii=False),
@@ -97,7 +104,7 @@ class ChatHandler:
         sender, message = event.get("sender", {}), event.get("message", {})
         sender_id = (sender.get("sender_id") or {}).get("open_id")
         tenant_match = self.allowed_tenant_key is not None and sender.get("tenant_key") == self.allowed_tenant_key
-        sender_allowed = bool(sender_id and (sender_id == self.owner_id or tenant_match))
+        sender_allowed = isinstance(sender_id, str) and bool(sender_id) and (sender_id == self.owner_id or tenant_match)
         emit("message_received", message_id=message.get("message_id"), chat_type=message.get("chat_type"),
              message_type=message.get("message_type"), sender_type=sender.get("sender_type"), sender_allowed=sender_allowed)
         if payload.get("header", {}).get("app_id") != self.app_id:
@@ -123,16 +130,22 @@ class ChatHandler:
             self.db.commit()
         if inserted:
             emit("message_queued", message_id=message_id)
-            self.pool.submit(self.process, message_id, text)
+            self.pool.submit(self.process, message_id, text, sender_id)
         elif state == "reply_pending":
             self.pool.submit(self.deliver, message_id)
         else:
             emit("message_duplicate", message_id=message_id, state=state)
 
-    def process(self, message_id, text):
+    def process(self, message_id, text, sender_id):
         emit("processing_started", message_id=message_id)
         try:
-            answer = self.updater.run(text, on_event=lambda event, **details: emit(event, message_id=message_id, **details))
+            try:
+                editor_name = self.bot.sender_name(sender_id)
+            except LarkError as error:
+                editor_name = ""
+                emit("sender_name_lookup_failed", message_id=message_id, lark_code=error.code)
+            answer = self.updater.run(text, editor_name=editor_name,
+                                      on_event=lambda event, **details: emit(event, message_id=message_id, **details))
         except Exception as error:
             # Avoid exposing credentials, model payloads or raw transport errors.
             logging.getLogger(__name__).error("Instruction failed (%s)", type(error).__name__)
