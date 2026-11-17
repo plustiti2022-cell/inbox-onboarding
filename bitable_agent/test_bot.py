@@ -130,6 +130,32 @@ class ChatTests(unittest.TestCase):
         self.updater.run.assert_not_called()
         self.bot.reply.assert_not_called()
 
+    def test_tenant_access_accepts_internal_dms_and_blocks_external_or_non_private_messages(self):
+        self.handler.close()
+        self.handler = ChatHandler("app", "owner", self.updater, self.bot, self.database,
+                                   allowed_tenant_key="home")
+        private = event()
+        private["event"]["sender"].update(sender_id={"open_id": "coworker"}, tenant_key="home")
+
+        for tenant in ("other", None):
+            payload = copy.deepcopy(private)
+            payload["header"]["tenant_key"] = "home"
+            payload["event"]["sender"]["tenant_key"] = tenant
+            self.handler.receive(payload)
+        for part, key, value in (("sender", "sender_id", {}), ("message", "chat_type", "group"),
+                                 ("message", "message_type", "image")):
+            payload = copy.deepcopy(private)
+            payload["event"][part][key] = value
+            self.handler.receive(payload)
+        self.flush()
+        self.updater.run.assert_not_called()
+        self.bot.reply.assert_not_called()
+
+        self.handler.receive(private)
+        self.flush()
+        self.updater.run.assert_called_once()
+        self.bot.reply.assert_called_once_with("om1", self.updater.run.return_value)
+
     def test_reply_failure_retries_reply_without_replaying_update(self):
         self.bot.reply.side_effect = RuntimeError("network")
         with self.assertLogs("bitable_agent.bot", level="ERROR"):
@@ -178,3 +204,21 @@ class ChatTests(unittest.TestCase):
             tools.return_value.api.request.return_value = {"open_id": "owner"}
             self.assertEqual(main([]), 0)
             serve.assert_called_once()
+
+    def test_tenant_mode_uses_tenant_from_authorized_user_info(self):
+        env = {"LARK_APP_ID": "app", "LARK_BITABLE_BOT_ACCESS": "tenant"}
+        with patch("bitable_agent.bot.PROJECT", Path(self.directory.name)), \
+                patch("bitable_agent.bot.read_env", return_value=env), \
+                patch("bitable_agent.bot.BotClient") as bot, \
+                patch("bitable_agent.bot.LarkRunLock"), \
+                patch("bitable_agent.bot.BitableTools") as tools, \
+                patch("bitable_agent.bot.DeepSeekClient"), \
+                patch("bitable_agent.bot.serve", return_value=True) as serve:
+            bot.return_value.check.return_value = {"bot_name": "bot", "missing_scopes": []}
+            tools.return_value.api.request.return_value = {"open_id": "owner"}
+            self.assertEqual(main([]), 1)
+            serve.assert_not_called()
+
+            tools.return_value.api.request.return_value["tenant_key"] = "home"
+            self.assertEqual(main([]), 0)
+            self.assertEqual(serve.call_args.args[1].allowed_tenant_key, "home")
