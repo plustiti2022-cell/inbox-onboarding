@@ -9,6 +9,8 @@ from model import validate_result
 from storage import LATEST_RECEIVED_TIME, PROGRESS_TABLE, SHANGHAI
 from workflow import IDENTITY_FIELDS, ManualReviewRequired, find_customer, progress_patch
 
+UPDATE_FIELDS = (*IDENTITY_FIELDS, "球在谁方", "卡点", "简要描述")
+
 
 class ManualUpdater:
     def __init__(self, client, tools):
@@ -31,7 +33,7 @@ class ManualUpdater:
                 "修改指令": instruction, "公司名称|客户名称|邮件列表": known}, ensure_ascii=False)},
         ], json_mode=True)
         try:
-            result = validate_result(json.loads(message["content"]))
+            result = validate_result(json.loads(message["content"]), fields=UPDATE_FIELDS)
         except (KeyError, TypeError, ValueError):
             trace("ai_output_invalid")
             return "未更新：AI 回傳格式不正確，請重新描述修改要求。"
@@ -45,7 +47,7 @@ class ManualUpdater:
         if target is None:
             return "未更新：找不到對應的開戶進度記錄，請核對客戶身份。"
         trace("record_matched", record_id=target["record_id"])
-        fields = progress_patch(result, target["fields"])
+        fields = progress_patch(result, target["fields"], fields=UPDATE_FIELDS, clearable=("卡点",))
         if not fields:
             return "未更新：沒有新的修改內容，原資料已保留。"
         updates = dict(fields)

@@ -27,7 +27,7 @@ MAIL_FIELDS = [
     "subject", "body.content（去除html）", "AI处理", "是否为开户邮件", "处理说明",
 ]
 LATEST_RECEIVED_TIME = "最新收件时间"
-PROGRESS_FIELDS = ["公司名称", "客户名称", "邮件", "球在谁方", "卡点", "简要描述", "经办人", LATEST_RECEIVED_TIME, "internetMessageId"]
+PROGRESS_FIELDS = ["公司名称", "客户名称", "邮件", "球在谁方", "状态", "卡点", "简要描述", "经办人", LATEST_RECEIVED_TIME, "internetMessageId"]
 SHANGHAI = timezone(timedelta(hours=8))
 
 
@@ -157,11 +157,13 @@ class ExcelRecordStore:
                 headers = [str(h) for h in matrix[0]]
                 required = set(self.headers[table] + ["record_id"])
                 if table == PROGRESS_TABLE:
-                    required.discard("internetMessageId")  # Older simulation workbooks lack this column.
+                    required.difference_update({"internetMessageId", "状态"})  # Older workbook formats.
                     headers = [LATEST_RECEIVED_TIME if h == "最新ai更新时间" else h for h in headers]
                 if len(headers) != len(set(headers)) or not required.issubset(headers):
                     raise ValueError(f"Invalid or missing headers in {table}")
                 self.headers[table] = [h for h in headers if h != "record_id"]
+                if table == PROGRESS_TABLE and "状态" not in headers:
+                    self.headers[table].append("状态")
                 seen = set()
                 for row in matrix[1:]:
                     if not any(v not in (None, "") for v in row):

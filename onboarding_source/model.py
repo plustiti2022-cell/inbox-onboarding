@@ -35,23 +35,37 @@ def read_env(path: Path) -> dict[str, str]:
     return result
 
 
-PROGRESS_RESULT_FIELDS = ("公司名称", "客户名称", "邮件", "球在谁方", "卡点", "简要描述")
+PROGRESS_RESULT_FIELDS = ("公司名称", "客户名称", "邮件", "球在谁方", "状态", "简要描述")
+ONBOARDING_STATUSES = (
+    "开户前沟通", "已发开户包／指引", "客户备料／补件／验证", "销售团队跟进中",
+    "KYC 审核中", "补件意见待转达", "已通知客户补件", "开户完成", "已关闭",
+)
+
+ACCESS_CODE = re.compile(
+    r"((?:\b(?:access|security|authentication|verification|signing|one[- ]time)[ \t]+(?:code|pin)\b"
+    r"|验证码|驗證碼|访问码|訪問碼|存取碼|安全码|安全碼)"
+    r"[ \t]*(?:is[ \t]+)?[:：]?[ \t]*(?:\r?\n[ \t]*)?)"
+    r"(?=[A-Za-z0-9-]{4,64}\b)(?=[A-Za-z0-9-]*\d)[A-Za-z0-9][A-Za-z0-9-]{3,63}",
+    re.IGNORECASE,
+)
 
 
-def validate_result(value: object) -> dict:
+def validate_result(value: object, *, fields=PROGRESS_RESULT_FIELDS) -> dict:
     if not isinstance(value, dict):
         raise ValueError("AI output must be a JSON object")
-    if set(value) != {"is_onboarding", *PROGRESS_RESULT_FIELDS}:
+    if set(value) != {"is_onboarding", *fields}:
         raise ValueError("AI output must contain only is_onboarding and the six progress fields")
     if type(value["is_onboarding"]) is not bool:
         raise ValueError("Invalid AI boolean field: is_onboarding")
-    for key in PROGRESS_RESULT_FIELDS:
+    for key in fields:
         if value[key] is not None and not isinstance(value[key], str):
             raise ValueError(f"Invalid AI nullable text field: {key}")
         if isinstance(value[key], str):
             value[key] = value[key].strip()
     if value["球在谁方"] not in (None, "", "球在我方", "球在客户", "球在合规"):
         raise ValueError("Invalid 球在谁方")
+    if value.get("状态") not in (None, *ONBOARDING_STATUSES):
+        raise ValueError("Invalid 状态")
     if value["邮件"] and not re.fullmatch(r"[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+", value["邮件"]):
         raise ValueError("AI email must contain one actual email address")
     return value
@@ -90,8 +104,8 @@ class MailAnalyzer:
             "邮件收件人名和邮箱": {"names": mail.get("toRecipients.names", ""), "emails": mail.get("toRecipients.addresses", "")},
             "邮件抄送人名和邮箱": {"names": mail.get("ccRecipients.names", ""), "emails": mail.get("ccRecipients.addresses", "")},
             "邮件密送人名和邮箱": {"names": mail.get("bccRecipients.names", ""), "emails": mail.get("bccRecipients.addresses", "")},
-            "邮件主题": mail.get("subject", ""),
-            "邮件正文": mail.get("body.content（去除html）", ""),
+            "邮件主题": ACCESS_CODE.sub(r"\1[访问码已移除]", mail.get("subject") or ""),
+            "邮件正文": ACCESS_CODE.sub(r"\1[访问码已移除]", mail.get("body.content（去除html）") or ""),
             "has_attachments": mail.get("hasAttachments", False),
             "公司名称|客户名称|邮件列表": known_customers,
         }

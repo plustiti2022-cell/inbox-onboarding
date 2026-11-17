@@ -30,7 +30,7 @@ def verify(directory):
     class Analyzer:
         def analyze(self, mail, known):
             if mail["subject"] == "1":
-                return result(卡点="缺地址证明")
+                return result(状态="已通知客户补件")
             if mail["subject"] == "2":
                 # Only name matches: company/email were absent, never clear them.
                 return result(公司名称="", 邮件="", 简要描述="附件已提交，待审核。")
@@ -49,7 +49,7 @@ def verify(directory):
         assert len(after) == 1
         fields = after[0]["fields"]
         assert fields["公司名称"] == "North Star Limited" and fields["邮件"] == "alice@northstar.example"
-        assert fields["卡点"] == "缺地址证明" and fields["经办人"] == "Ingrid.Lin"
+        assert fields["状态"] == "已通知客户补件" and fields["经办人"] == "Ingrid.Lin"
         assert fields["internetMessageId"] == "<synthetic-2@example.com>"
         assert fields["简要描述"] == "附件已提交，待审核。"
         mails = reopened.list_records(MAIL_TABLE)
@@ -58,27 +58,27 @@ def verify(directory):
         assert all(r["fields"]["body.content（去除html）"].startswith("=本次邮件") for r in mails)
         assert all(r["fields"]["receivedDateTime"].endswith("Z") for r in mails)
         assert process_pending(reopened, Analyzer())["processed"] == 0
-        # Persist an explicit resolution and verify it clears, not just null/absent.
+        # Persist a later status and verify it survives reopening.
         reopened.create_record(MAIL_TABLE, {"receivedDateTime": "2026-11-03T04:00:00Z", "AI处理": "AI未完成",
                                            "internetMessageId": "<synthetic-4@example.com>"})
 
         class Resolved:
             def analyze(self, mail, known):
-                return result(卡点="", 简要描述="审核明确确认地址证明通过。")
+                return result(状态="KYC 审核中", 简要描述="资料已交给 KYC 进行审核。")
 
         process_pending(reopened, Resolved())
     finally:
         reopened.close()
     saved = ExcelRecordStore(workbook, node, modules)
     try:
-        assert saved.list_records(PROGRESS_TABLE)[0]["fields"]["卡点"] == ""
+        assert saved.list_records(PROGRESS_TABLE)[0]["fields"]["状态"] == "KYC 审核中"
         assert saved.list_records(PROGRESS_TABLE)[0]["record_id"] == before[0]["record_id"]
     finally:
         saved.close()
     source = load_mail_input(workbook)
     assert len(source) == 4
     outcome = {"passed": True, "first_run": {k: v for k, v in report.items() if k != "items"},
-               "verified": ["two tables", "create/update/negative", "name-only OR matching", "stable record IDs", "preserve old blocker", "assign handler from CC on create and keep it on update", "source mail ID", "explicit resolution", "literal equals text", "booleans", "UTC dates", "resume", "XLSX mail input"]}
+               "verified": ["two tables", "create/update/negative", "name-only OR matching", "stable record IDs", "preserve status on null", "assign handler from CC on create and keep it on update", "source mail ID", "explicit status update", "literal equals text", "booleans", "UTC dates", "resume", "XLSX mail input"]}
     (directory / "verification.json").write_text(json.dumps(outcome, ensure_ascii=False, indent=2), encoding="utf-8")
     print(json.dumps(outcome, ensure_ascii=False))
 

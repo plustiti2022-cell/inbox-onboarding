@@ -78,7 +78,7 @@ def exercise(env):
              "Our certificate of incorporation is still missing and we will send it tomorrow. Please wait for our document. Our HashKey account manager is Adrian Wu."),
             ("updated", "adrian.wu@hashkey.com", "Adrian Wu", "KYC Team", "kyc@hashkey.com", "Account opening documents complete - " + marker,
              f"Update for {marker}, customer Evelyn Hart, email {address}: The previously missing certificate has been verified and accepted. "
-             "All requested documents passed completeness checks and no further supplementary documents are required. The previous missing-document blocker is fully resolved. "
+             "All requested documents passed completeness checks and no further supplementary documents are required. "
              "KYC team, please perform the final account opening review. Internal account manager: Adrian Wu."),
             ("non_onboarding", "newsletter@example.invalid", "Weather Newsletter", "Adrian Wu", "adrian.wu@hashkey.com", "Weekly weather newsletter",
              "This is a weather newsletter. Tomorrow will be sunny. No account applications or customer onboarding are discussed."),
@@ -106,7 +106,7 @@ def exercise(env):
                     reread = LarkRecordStore(env)
                     try:
                         progress = next(r for r in reread.list_records(PROGRESS_TABLE) if r["record_id"] == progress_id)
-                        assert not progress["fields"].get("卡点"), "Resolved blocker was not cleared"
+                        assert progress["fields"].get("状态") == "KYC 审核中", "Wrong onboarding status"
                         assert progress["fields"].get("球在谁方") == "球在合规", "Wrong responsible party"
                     finally:
                         reread.close()
