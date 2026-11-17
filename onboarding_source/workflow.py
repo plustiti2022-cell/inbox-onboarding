@@ -8,6 +8,29 @@ from model import PROGRESS_RESULT_FIELDS, validate_result
 from storage import LATEST_RECEIVED_TIME, MAIL_TABLE, MANUAL_REVIEW, PROGRESS_TABLE, SHANGHAI, TERMINAL_MAIL_STATUSES, RecordStore
 
 IDENTITY_FIELDS = ("公司名称", "客户名称", "邮件")
+DEFAULT_HANDLER = "james.yang@hashkey.com"
+HANDLER_EMAILS = {
+    DEFAULT_HANDLER,
+    "prance.wang@hashkey.com",
+    "zishan.feng@hashkey.com",
+    "jx.yao@hashkey.com",
+    "ingrid.lin@hashkey.com",
+    "kathy.sun@hashkey.com",
+    "bruce.li@hashkey.com",
+    "fery.li@hashkey.com",
+    "meilin.wu@hashkey.com",
+}
+
+
+def select_handler(mail: dict) -> str:
+    selected = DEFAULT_HANDLER
+    for field in ("from.emailAddress.address", "toRecipients.addresses", "ccRecipients.addresses"):
+        addresses = (mail.get(field) or "").casefold().split(",")
+        matches = [address.strip() for address in addresses if address.strip() in HANDLER_EMAILS]
+        if matches:
+            selected = next((address for address in matches if address != DEFAULT_HANDLER), matches[0])
+            break
+    return selected.split("@", 1)[0].title()
 
 
 def normalized(value: str) -> str:
@@ -103,6 +126,7 @@ def process_pending(store: RecordStore, analyzer, limit: int | None = None, on_e
                     if not isinstance(message_id, str) or not message_id.strip():
                         raise ValueError("Onboarding mail is missing internetMessageId")
                     patch = progress_patch(result, target["fields"] if target else None)
+                    patch["经办人"] = select_handler(record["fields"])
                     patch["internetMessageId"] = message_id
                     patch[LATEST_RECEIVED_TIME] = datetime.now(SHANGHAI).isoformat(timespec="seconds")
                     if target is None:

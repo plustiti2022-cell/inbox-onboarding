@@ -13,7 +13,7 @@ from datetime import datetime, timedelta
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from model import MailAnalyzer, read_env, validate_result
 from storage import MAIL_TABLE, PROGRESS_TABLE, canonical_header, load_mail_input
-from workflow import find_customer, process_pending, progress_patch
+from workflow import find_customer, process_pending, progress_patch, select_handler
 
 
 def result(**updates):
@@ -104,6 +104,20 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(changed["客户名称"], "Alice Zhang")
         self.assertEqual(changed["邮件"], "alice.zhang@northstar.example")
 
+    def test_handler_priority_uses_first_matching_header_and_exact_email(self):
+        cases = (
+            ({"from.emailAddress.address": " JAMES.YANG@HASHKEY.COM ",
+              "toRecipients.addresses": "prance.wang@hashkey.com"}, "James.Yang"),
+            ({"toRecipients.addresses": "james.yang@hashkey.com, KATHY.SUN@hashkey.com, bruce.li@hashkey.com",
+              "ccRecipients.addresses": "fery.li@hashkey.com"}, "Kathy.Sun"),
+            ({"from.emailAddress.address": "fery.li@hashkey.com.example",
+              "ccRecipients.addresses": "meilin.wu@hashkey.com"}, "Meilin.Wu"),
+            ({"toRecipients.addresses": None, "bccRecipients.addresses": "bruce.li@hashkey.com"}, "James.Yang"),
+        )
+        for mail, expected in cases:
+            with self.subTest(mail=mail):
+                self.assertEqual(select_handler(mail), expected)
+
     def test_chronological_create_update_negative_and_identity_only_context(self):
         store = MemoryStore()
         participants = {
@@ -128,8 +142,10 @@ class WorkflowTests(unittest.TestCase):
                 if mail["subject"] == "1":
                     return result(卡点="缺地址证明")
                 if mail["subject"] == "2":
-                    self_test.assertEqual(store.list_records(PROGRESS_TABLE)[0]["fields"]["internetMessageId"], "<1@example.invalid>")
-                    self_test.assertEqual(store.list_records(PROGRESS_TABLE)[0]["fields"]["最新收件时间"], now.isoformat())
+                    created = store.list_records(PROGRESS_TABLE)[0]["fields"]
+                    self_test.assertEqual(created["internetMessageId"], "<1@example.invalid>")
+                    self_test.assertEqual(created["最新收件时间"], now.isoformat())
+                    self_test.assertEqual(created["经办人"], "Fery.Li")
                     return result(简要描述="请查收附件。")
                 return result(is_onboarding=False, 公司名称="", 客户名称="", 邮件="", 球在谁方="", 简要描述=None)
 
@@ -143,7 +159,7 @@ class WorkflowTests(unittest.TestCase):
             "is_onboarding", "公司名称", "客户名称", "邮件", "球在谁方", "卡点", "简要描述"})
         progress = store.list_records(PROGRESS_TABLE)[0]["fields"]
         self.assertEqual(progress["卡点"], "缺地址证明")
-        self.assertNotIn("经办人", progress)
+        self.assertEqual(progress["经办人"], "Prance.Wang")
         self.assertEqual(progress["简要描述"], "请查收附件。")
         self.assertEqual(progress["internetMessageId"], "<2@example.invalid>")
         self.assertEqual(progress["最新收件时间"], now.isoformat())
@@ -181,10 +197,10 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(report["updated"], 1)
         table, record_id, fields = write.call_args_list[0].args
         self.assertEqual((table, record_id), (PROGRESS_TABLE, original["record_id"]))
-        self.assertTrue({"公司名称", "客户名称", "邮件", "简要描述", "卡点", "经办人"}.isdisjoint(fields))
+        self.assertTrue({"公司名称", "客户名称", "邮件", "简要描述", "卡点"}.isdisjoint(fields))
         progress = store.list_records(PROGRESS_TABLE)[0]["fields"]
         self.assertEqual(progress["卡点"], "缺地址证明")
-        self.assertEqual(progress["经办人"], "existing.handler")
+        self.assertEqual(progress["经办人"], "James.Yang")
         self.assertEqual(progress["internetMessageId"], "<source@example.invalid>")
         updated = datetime.fromisoformat(progress["最新收件时间"])
         self.assertEqual(updated.utcoffset(), timedelta(hours=8))

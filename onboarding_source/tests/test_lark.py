@@ -206,6 +206,7 @@ class LarkTests(unittest.TestCase):
                     "公司名称": "North Star Limited", "客户名称": "Alice Chen", "邮件": "alice@northstar.example",
                     "卡点": "缺地址证明", "简要描述": "等待补件", "经办人": "original.handler"})
                 store.create_record(MAIL_TABLE, {"receivedDateTime": "2026-11-03T00:00:00Z",
+                                                 "toRecipients.addresses": "bruce.li@hashkey.com",
                                                  "internetMessageId": "<source@example.invalid>"})
                 analyzer = Mock()
                 analyzer.analyze.return_value = result(公司名称="Ｎorth Star Limited", 邮件=None,
@@ -216,12 +217,12 @@ class LarkTests(unittest.TestCase):
                     report = process_pending(store, analyzer)
                 self.assertEqual((report["updated"], report["failed"]), (1, 0))
                 self.assertEqual(request.call_args_list[0].kwargs["body"], {"fields": {
-                    "卡点": None, "internetMessageId": "<source@example.invalid>",
+                    "卡点": None, "经办人": "Bruce.Li", "internetMessageId": "<source@example.invalid>",
                     "最新收件时间": int(now.timestamp() * 1000)}})
                 progress = cloud.rows["progress"][0]["fields"]
                 self.assertEqual(progress["公司名称"], "North Star Limited")
                 self.assertEqual(progress["简要描述"], "等待补件")
-                self.assertEqual(progress["经办人"], "original.handler")
+                self.assertEqual(progress["经办人"], "Bruce.Li")
                 self.assertIsNone(progress["卡点"])
 
     def test_events_ignore_own_status_writes_and_other_tables(self):
