@@ -23,6 +23,8 @@ def verify(directory):
         fields.update({"internetMessageId": f"<synthetic-{hour}@example.com>",
                        "receivedDateTime": f"2026-11-03T0{hour}:00:00Z", "AI处理": "AI未完成", "subject": str(hour),
                        "hasAttachments": True, "body.content（去除html）": "=本次邮件包含中文、换行\n及 literal text"})
+        if hour == 1:
+            fields["ccRecipients.addresses"] = "ingrid.lin@hashkey.com"
         store.create_record(MAIL_TABLE, fields)
 
     class Analyzer:
@@ -47,7 +49,7 @@ def verify(directory):
         assert len(after) == 1
         fields = after[0]["fields"]
         assert fields["公司名称"] == "North Star Limited" and fields["邮件"] == "alice@northstar.example"
-        assert fields["卡点"] == "缺地址证明" and not fields["经办人"]
+        assert fields["卡点"] == "缺地址证明" and fields["经办人"] == "Ingrid.Lin"
         assert fields["internetMessageId"] == "<synthetic-2@example.com>"
         assert fields["简要描述"] == "附件已提交，待审核。"
         mails = reopened.list_records(MAIL_TABLE)
@@ -76,7 +78,7 @@ def verify(directory):
     source = load_mail_input(workbook)
     assert len(source) == 4
     outcome = {"passed": True, "first_run": {k: v for k, v in report.items() if k != "items"},
-               "verified": ["two tables", "create/update/negative", "name-only OR matching", "stable record IDs", "preserve old blocker and handler", "source mail ID", "explicit resolution", "literal equals text", "booleans", "UTC dates", "resume", "XLSX mail input"]}
+               "verified": ["two tables", "create/update/negative", "name-only OR matching", "stable record IDs", "preserve old blocker", "assign handler from CC on create and keep it on update", "source mail ID", "explicit resolution", "literal equals text", "booleans", "UTC dates", "resume", "XLSX mail input"]}
     (directory / "verification.json").write_text(json.dumps(outcome, ensure_ascii=False, indent=2), encoding="utf-8")
     print(json.dumps(outcome, ensure_ascii=False))
 
