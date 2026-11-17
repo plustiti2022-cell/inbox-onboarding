@@ -159,7 +159,7 @@ class WorkflowTests(unittest.TestCase):
             "is_onboarding", "公司名称", "客户名称", "邮件", "球在谁方", "卡点", "简要描述"})
         progress = store.list_records(PROGRESS_TABLE)[0]["fields"]
         self.assertEqual(progress["卡点"], "缺地址证明")
-        self.assertEqual(progress["经办人"], "Prance.Wang")
+        self.assertEqual(progress["经办人"], "Fery.Li")
         self.assertEqual(progress["简要描述"], "请查收附件。")
         self.assertEqual(progress["internetMessageId"], "<2@example.invalid>")
         self.assertEqual(progress["最新收件时间"], now.isoformat())
@@ -184,7 +184,7 @@ class WorkflowTests(unittest.TestCase):
                                          "internetMessageId": "<source@example.invalid>"})
         original = store.create_record(PROGRESS_TABLE, {
             "公司名称": "North Star Limited", "客户名称": "Alice Chen", "邮件": "alice@northstar.example",
-            "卡点": "缺地址证明", "经办人": "existing.handler", "internetMessageId": "人工修改"})
+            "卡点": "缺地址证明", "经办人": "Jx.Yao", "internetMessageId": "人工修改"})
 
         class Analyzer:
             def analyze(self, mail, known):
@@ -197,10 +197,10 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(report["updated"], 1)
         table, record_id, fields = write.call_args_list[0].args
         self.assertEqual((table, record_id), (PROGRESS_TABLE, original["record_id"]))
-        self.assertTrue({"公司名称", "客户名称", "邮件", "简要描述", "卡点"}.isdisjoint(fields))
+        self.assertTrue({"公司名称", "客户名称", "邮件", "简要描述", "卡点", "经办人"}.isdisjoint(fields))
         progress = store.list_records(PROGRESS_TABLE)[0]["fields"]
         self.assertEqual(progress["卡点"], "缺地址证明")
-        self.assertEqual(progress["经办人"], "James.Yang")
+        self.assertEqual(progress["经办人"], "Jx.Yao")
         self.assertEqual(progress["internetMessageId"], "<source@example.invalid>")
         updated = datetime.fromisoformat(progress["最新收件时间"])
         self.assertEqual(updated.utcoffset(), timedelta(hours=8))

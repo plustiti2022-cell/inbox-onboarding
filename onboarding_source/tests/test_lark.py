@@ -194,7 +194,7 @@ class LarkTests(unittest.TestCase):
                 self.assertEqual(len(cloud.rows["progress"]), 1)
                 self.assertEqual(cloud.rows["mail"][0]["fields"]["AI处理"], "AI已处理")
 
-    def test_six_field_update_preserves_identity_and_encodes_mail_metadata(self):
+    def test_mail_update_preserves_handler_and_identity_and_encodes_metadata(self):
         now = datetime.fromisoformat("2026-11-10T15:12:34+08:00")
         for disk_backed in (False, True):
             with self.subTest(disk_backed=disk_backed):
@@ -204,7 +204,7 @@ class LarkTests(unittest.TestCase):
                 self.addCleanup(store.close)
                 store.create_record(PROGRESS_TABLE, {
                     "公司名称": "North Star Limited", "客户名称": "Alice Chen", "邮件": "alice@northstar.example",
-                    "卡点": "缺地址证明", "简要描述": "等待补件", "经办人": "original.handler"})
+                    "卡点": "缺地址证明", "简要描述": "等待补件", "经办人": "Jx.Yao"})
                 store.create_record(MAIL_TABLE, {"receivedDateTime": "2026-11-03T00:00:00Z",
                                                  "toRecipients.addresses": "bruce.li@hashkey.com",
                                                  "internetMessageId": "<source@example.invalid>"})
@@ -217,12 +217,12 @@ class LarkTests(unittest.TestCase):
                     report = process_pending(store, analyzer)
                 self.assertEqual((report["updated"], report["failed"]), (1, 0))
                 self.assertEqual(request.call_args_list[0].kwargs["body"], {"fields": {
-                    "卡点": None, "经办人": "Bruce.Li", "internetMessageId": "<source@example.invalid>",
+                    "卡点": None, "internetMessageId": "<source@example.invalid>",
                     "最新收件时间": int(now.timestamp() * 1000)}})
                 progress = cloud.rows["progress"][0]["fields"]
                 self.assertEqual(progress["公司名称"], "North Star Limited")
                 self.assertEqual(progress["简要描述"], "等待补件")
-                self.assertEqual(progress["经办人"], "Bruce.Li")
+                self.assertEqual(progress["经办人"], "Jx.Yao")
                 self.assertIsNone(progress["卡点"])
 
     def test_events_ignore_own_status_writes_and_other_tables(self):

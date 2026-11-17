@@ -126,10 +126,10 @@ def process_pending(store: RecordStore, analyzer, limit: int | None = None, on_e
                     if not isinstance(message_id, str) or not message_id.strip():
                         raise ValueError("Onboarding mail is missing internetMessageId")
                     patch = progress_patch(result, target["fields"] if target else None)
-                    patch["经办人"] = select_handler(record["fields"])
                     patch["internetMessageId"] = message_id
                     patch[LATEST_RECEIVED_TIME] = datetime.now(SHANGHAI).isoformat(timespec="seconds")
                     if target is None:
+                        patch["经办人"] = select_handler(record["fields"])
                         target = store.create_record(PROGRESS_TABLE, patch)
                         event["action"] = "created"
                     else:
