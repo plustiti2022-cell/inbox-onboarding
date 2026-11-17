@@ -17,6 +17,7 @@ import requests
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from lark_support import LarkAPI, LarkAuth, LarkError, LarkHTTP, LarkRunLock, SecureJSON
 from lark_store import LarkRecordStore, field_schema
+from model import ONBOARDING_STATUSES
 from run_lark_listener import should_wake
 from storage import MAIL_TABLE, PROGRESS_TABLE
 from workflow import process_pending
@@ -202,6 +203,10 @@ class LarkTests(unittest.TestCase):
                 cloud.http = Mock()
                 store = LarkRecordStore(ENV, api=cloud, disk_backed=disk_backed)
                 self.addCleanup(store.close)
+                status_field = store.fields[PROGRESS_TABLE]["状态"]
+                self.assertEqual(status_field["type"], 3)
+                self.assertEqual(tuple(option["name"] for option in status_field["property"]["options"]),
+                                 ONBOARDING_STATUSES)
                 store.create_record(PROGRESS_TABLE, {
                     "公司名称": "North Star Limited", "客户名称": "Alice Chen", "邮件": "alice@northstar.example",
                     "状态": "已通知客户补件", "卡点": "缺地址证明", "简要描述": "等待补件", "经办人": "Jx.Yao"})
@@ -225,6 +230,16 @@ class LarkTests(unittest.TestCase):
                 self.assertEqual(progress["经办人"], "Jx.Yao")
                 self.assertEqual(progress["状态"], "客户备料／补件／验证")
                 self.assertEqual(progress["卡点"], "缺地址证明")
+
+    def test_mail_status_does_not_create_an_unconfigured_select_option(self):
+        cloud = Cloud()
+        cloud.http = Mock()
+        with patch.object(cloud, "request", wraps=cloud.request) as request:
+            store = LarkRecordStore(ENV, api=cloud)
+            self.addCleanup(store.close)
+            with self.assertRaisesRegex(ValueError, "not a configured Lark option"):
+                store.create_record(PROGRESS_TABLE, {"状态": "待人工确认"})
+            request.assert_not_called()
 
     def test_events_ignore_own_status_writes_and_other_tables(self):
         base = {"file_token": "base", "table_id": "mail", "action_list": [{"action": "record_edited", "after_value": [{"field_id": "status", "field_value": "AI已处理"}]}]}

@@ -4,6 +4,7 @@ import copy
 from disk_snapshot import DiskSnapshot, DiskRecords
 from datetime import datetime, timezone
 from lark_support import LarkAPI, LarkError
+from model import ONBOARDING_STATUSES
 from storage import LATEST_RECEIVED_TIME, MAIL_TABLE, PROGRESS_TABLE, MAIL_FIELDS, PROGRESS_FIELDS, SHANGHAI, TERMINAL_MAIL_STATUSES
 
 def field_schema(table):
@@ -14,6 +15,9 @@ def field_schema(table):
                  else 7 if name == "hasAttachments" else 1}
         if field["type"] == 5:
             field["property"] = {"date_formatter": "yyyy/MM/dd HH:mm"}
+        elif name == "状态":
+            field["type"] = 3
+            field["property"] = {"options": [{"name": status} for status in ONBOARDING_STATUSES]}
         result.append(field)
     return result
 
@@ -87,6 +91,10 @@ class LarkRecordStore:
             elif kind in (1, 3):
                 if not isinstance(value, str):
                     raise ValueError(f"Text/select field must be a string: {name}")
+                if kind == 3 and name == "状态":
+                    options = (self.fields[table][name].get("property") or {}).get("options", [])
+                    if not any(option["name"] == value for option in options):
+                        raise ValueError(f"状态 is not a configured Lark option: {value}")
             else:
                 raise ValueError(f"Unsupported writable field type for {name}: {kind}")
             output[name] = value
