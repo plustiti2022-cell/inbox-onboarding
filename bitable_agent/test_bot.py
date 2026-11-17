@@ -1,4 +1,4 @@
-"""Offline checks for seven-key chat updates, confirmed replies and event deduplication."""
+"""Offline checks for chat updates, confirmed replies and event deduplication."""
 import copy
 import json
 import tempfile
@@ -14,7 +14,7 @@ from .update import ManualUpdater
 
 def answer(**changes):
     result = {"is_onboarding": True, "公司名称": "ABC公司", "客户名称": "陳先生", "邮件": "chan@example.com",
-              "球在谁方": None, "卡点": None, "简要描述": "等待合规审核"}
+              "球在谁方": None, "状态": None, "卡点": None, "简要描述": "等待合规审核"}
     result.update(changes)
     return result
 
@@ -37,15 +37,18 @@ class UpdateTests(unittest.TestCase):
         self.client.complete.return_value = {"content": json.dumps(answer())}
         self.updater = ManualUpdater(self.client, self.tools)
 
-    def test_confirmed_update_uses_seven_keys_and_returns_actual_fields(self):
+    def test_confirmed_update_writes_and_reports_status_with_summary(self):
+        self.client.complete.return_value = {"content": json.dumps(answer(状态="KYC 审核中"))}
         trace = Mock()
-        result = self.updater.run("將ABC公司的摘要改為等待合规审核", on_event=trace)
+        result = self.updater.run("ABC公司的材料已交給合規審核", on_event=trace)
         self.assertTrue(result.startswith("已更新 ABC公司"))
         self.assertIn("简要描述 → 等待合规审核", result)
+        self.assertIn("状态 → KYC 审核中", result)
         self.assertIn("rec1", result)
         table, record_id, fields = self.tools.update_record.call_args.args
         self.assertEqual((table, record_id), ("开户进度表", "rec1"))
-        self.assertEqual(set(fields), {"简要描述", "最新收件时间", "internetMessageId"})
+        self.assertEqual(set(fields), {"状态", "简要描述", "最新收件时间", "internetMessageId"})
+        self.assertEqual(fields["状态"], "KYC 审核中")
         self.assertEqual(fields["internetMessageId"], "人工修改")
         self.assertEqual(datetime.fromisoformat(fields["最新收件时间"]).utcoffset(), timedelta(hours=8))
         messages = self.client.complete.call_args.args[0]
@@ -56,11 +59,19 @@ class UpdateTests(unittest.TestCase):
             "ai_result", "record_matched", "update_prepared", "update_confirmed"])
         self.assertEqual(trace.call_args_list[2].kwargs["fields"], fields)
 
+    def test_status_only_update_keeps_other_business_fields(self):
+        self.client.complete.return_value = {"content": json.dumps(answer(状态="开户完成", 简要描述=None))}
+        result = self.updater.run("只把ABC公司的狀態改為开户完成")
+        self.assertIn("状态 → 开户完成", result)
+        fields = self.tools.update_record.call_args.args[2]
+        self.assertEqual(set(fields), {"状态", "最新收件时间", "internetMessageId"})
+
     def test_explicit_clear_keeps_unspecified_fields(self):
         self.client.complete.return_value = {"content": json.dumps(answer(卡点="", 简要描述=None))}
         self.assertIn("卡点 → 已清空", self.updater.run("清空卡点"))
         fields = self.tools.update_record.call_args.args[2]
         self.assertEqual(fields["卡点"], "")
+        self.assertNotIn("状态", fields)
         self.assertNotIn("简要描述", fields)
 
     def test_confirmed_update_records_the_sender_name(self):
@@ -84,7 +95,8 @@ class UpdateTests(unittest.TestCase):
                 self.tools.update_record.assert_not_called()
 
     def test_invalid_output_and_unconfirmed_write_never_claim_success(self):
-        for output in ("not json", json.dumps({**answer(), "record_id": "rec1"})):
+        for output in ("not json", json.dumps({**answer(), "record_id": "rec1"}),
+                       json.dumps(answer(状态="等待合规审核"))):
             self.client.complete.return_value = {"content": output}
             self.assertTrue(self.updater.run("修改").startswith("未更新"))
             self.tools.update_record.assert_not_called()

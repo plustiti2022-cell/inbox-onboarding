@@ -9,7 +9,9 @@ from .tools import BitableTools
 
 ENV = {"LARK_BASE_TOKEN": "base", "LARK_PROGRESS_TABLE_ID": "tblProgress"}
 META = [{"field_name": name, "type": kind} for name, kind in (
-    ("公司名称", 1), ("卡点", 1), ("最新收件时间", 5), ("附件", 7), ("公式", 20))]
+    ("公司名称", 1), ("卡点", 1), ("最新收件时间", 5), ("附件", 7), ("公式", 20))] + [
+        {"field_name": "状态", "type": 3, "property": {"options": [{"name": "KYC 审核中"}]}},
+    ]
 
 
 def call(name, args, identifier="call1"):
@@ -24,16 +26,17 @@ class AgentTests(unittest.TestCase):
         self.tools = BitableTools(ENV, api=self.api)
 
     def test_real_dispatch_and_result_continuation(self):
-        self.api.request.return_value = {"record": {"record_id": "rec123", "fields": {"卡点": "已补交"}}}
+        fields = {"卡点": "等待合规审核", "状态": "KYC 审核中"}
+        self.api.request.return_value = {"record": {"record_id": "rec123", "fields": fields}}
         client = Mock()
         client.complete.side_effect = [
             {"role": "assistant", "content": None, "reasoning_content": "internal",
-             "tool_calls": [call("update_record", {"table": "开户进度表", "record_id": "rec123", "fields": {"卡点": "已补交"}})]},
+             "tool_calls": [call("update_record", {"table": "开户进度表", "record_id": "rec123", "fields": fields})]},
             {"role": "assistant", "content": "已更新 rec123"}]
-        result = BitableAgent(client, self.tools).run("修改卡点")
+        result = BitableAgent(client, self.tools).run("修改进度，资料已交给合规审核")
         self.assertTrue(result["tool_calls"][0]["result"]["ok"])
         self.api.request.assert_called_once_with("PUT", "/open-apis/bitable/v1/apps/base/tables/tblProgress/records/rec123",
-                                                 body={"fields": {"卡点": "已补交"}})
+                                                 body={"fields": fields})
         messages = client.complete.call_args.args[0]
         self.assertEqual(messages[-1]["tool_call_id"], "call1")
         self.assertTrue(json.loads(messages[-1]["content"])["ok"])
@@ -53,7 +56,7 @@ class AgentTests(unittest.TestCase):
 
     def test_bad_fields_rejected_before_write(self):
         for fields in ({"不存在": "x"}, {"最新收件时间": "2026-11-10T09:00:00"},
-                       {"附件": "false"}, {"公式": None}, {}):
+                       {"附件": "false"}, {"公式": None}, {"卡点": "待审核", "状态": "开户完成"}, {}):
             self.assertFalse(self.tools.execute("update_record", {
                 "table": "开户进度表", "record_id": "rec123", "fields": fields})["ok"])
         self.api.request.assert_not_called()

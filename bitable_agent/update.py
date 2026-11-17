@@ -1,4 +1,4 @@
-"""Authorized chat instruction -> seven-key JSON -> confirmed Bitable update."""
+"""Authorized chat instruction -> structured JSON -> confirmed Bitable update."""
 from __future__ import annotations
 
 import json
@@ -9,7 +9,7 @@ from model import validate_result
 from storage import LATEST_RECEIVED_TIME, PROGRESS_TABLE, SHANGHAI
 from workflow import IDENTITY_FIELDS, ManualReviewRequired, find_customer, progress_patch
 
-UPDATE_FIELDS = (*IDENTITY_FIELDS, "球在谁方", "卡点", "简要描述")
+UPDATE_FIELDS = (*IDENTITY_FIELDS, "球在谁方", "状态", "卡点", "简要描述")
 
 
 class ManualUpdater:
@@ -56,6 +56,8 @@ class ManualUpdater:
         trace("update_prepared", record_id=target["record_id"], fields=fields)
         try:
             self.tools.update_record(PROGRESS_TABLE, target["record_id"], fields)
+        except ValueError:
+            return "未更新：欄位或選項與 Lark 表格設定不符，請核對表格設定。"
         except RuntimeError:
             # An HTTP timeout may follow a committed write: never claim success or
             # automatically replay the instruction when confirmation is missing.
