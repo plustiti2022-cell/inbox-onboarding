@@ -10,6 +10,7 @@ from pathlib import Path
 from urllib.parse import quote
 
 from lark_support import LarkAPI, LarkAuth, LarkError, LarkHTTP, KeychainJSON, SecureJSON
+from storage import MAIL_TABLE, PROGRESS_TABLE
 
 
 def function(name, description, properties, required=()):
@@ -43,7 +44,7 @@ class BitableTools:
     def __init__(self, env, *, api=None, auth_project=None):
         self.base = env.get("LARK_BASE_TOKEN", "")
         self.tables = {name: env[key] for name, key in (
-            ("邮件信息表", "LARK_MAIL_TABLE_ID"), ("开户进度表", "LARK_PROGRESS_TABLE_ID")) if env.get(key)}
+            (MAIL_TABLE, "LARK_MAIL_TABLE_ID"), (PROGRESS_TABLE, "LARK_PROGRESS_TABLE_ID")) if env.get(key)}
         if not self.base or not self.tables:
             raise ValueError("Missing LARK_BASE_TOKEN or configured table IDs")
         if api is not None:
@@ -129,6 +130,7 @@ class BitableTools:
         if not isinstance(fields, dict) or not fields:
             raise ValueError("fields must be a nonempty object")
         metadata, output = self.field_map(table), {}
+        is_progress_table = self.tables.get(table, table) == self.tables.get(PROGRESS_TABLE)
         for name, value in fields.items():
             if name not in metadata:
                 raise ValueError("Unknown field: " + name)
@@ -140,6 +142,10 @@ class BitableTools:
                 continue
             if kind in (1, 3) and not isinstance(value, str):
                 raise ValueError("Text/select requires a string: " + name)
+            if kind == 3 and is_progress_table and name == "状态":
+                options = (metadata[name].get("property") or {}).get("options", [])
+                if not any(option["name"] == value for option in options):
+                    raise ValueError(f"状态 is not a configured Lark option: {value}")
             if kind == 2 and (type(value) not in (int, float) or not math.isfinite(value)):
                 raise ValueError("Number requires a finite number: " + name)
             if kind == 4 and (not isinstance(value, list) or not all(isinstance(v, str) for v in value)):

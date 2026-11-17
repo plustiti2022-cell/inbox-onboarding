@@ -54,7 +54,7 @@ def validate_result(value: object, *, fields=PROGRESS_RESULT_FIELDS) -> dict:
     if not isinstance(value, dict):
         raise ValueError("AI output must be a JSON object")
     if set(value) != {"is_onboarding", *fields}:
-        raise ValueError("AI output must contain only is_onboarding and the six progress fields")
+        raise ValueError("AI output must contain exactly is_onboarding and the expected fields")
     if type(value["is_onboarding"]) is not bool:
         raise ValueError("Invalid AI boolean field: is_onboarding")
     for key in fields:
