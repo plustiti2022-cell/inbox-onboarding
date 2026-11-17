@@ -99,8 +99,11 @@ def process_pending(store: RecordStore, analyzer, limit: int | None = None, on_e
                     reason = f"{review.reason} {reason}"
                     event["action"] = "manual_review"
                 else:
+                    message_id = event["internetMessageId"]
+                    if not isinstance(message_id, str) or not message_id.strip():
+                        raise ValueError("Onboarding mail is missing internetMessageId")
                     patch = progress_patch(result, target["fields"] if target else None)
-                    patch["internetMessageId"] = "人工修改"
+                    patch["internetMessageId"] = message_id
                     patch[LATEST_RECEIVED_TIME] = datetime.now(SHANGHAI).isoformat(timespec="seconds")
                     if target is None:
                         target = store.create_record(PROGRESS_TABLE, patch)

@@ -48,7 +48,7 @@ def verify(directory):
         fields = after[0]["fields"]
         assert fields["公司名称"] == "North Star Limited" and fields["邮件"] == "alice@northstar.example"
         assert fields["卡点"] == "缺地址证明" and not fields["经办人"]
-        assert fields["internetMessageId"] == "人工修改"
+        assert fields["internetMessageId"] == "<synthetic-2@example.com>"
         assert fields["简要描述"] == "附件已提交，待审核。"
         mails = reopened.list_records(MAIL_TABLE)
         assert all(r["fields"]["AI处理"] == "AI已处理" for r in mails)
@@ -76,7 +76,7 @@ def verify(directory):
     source = load_mail_input(workbook)
     assert len(source) == 4
     outcome = {"passed": True, "first_run": {k: v for k, v in report.items() if k != "items"},
-               "verified": ["two tables", "create/update/negative", "name-only OR matching", "stable record IDs", "preserve old blocker and handler", "manual source marker", "explicit resolution", "literal equals text", "booleans", "UTC dates", "resume", "XLSX mail input"]}
+               "verified": ["two tables", "create/update/negative", "name-only OR matching", "stable record IDs", "preserve old blocker and handler", "source mail ID", "explicit resolution", "literal equals text", "booleans", "UTC dates", "resume", "XLSX mail input"]}
     (directory / "verification.json").write_text(json.dumps(outcome, ensure_ascii=False, indent=2), encoding="utf-8")
     print(json.dumps(outcome, ensure_ascii=False))
 

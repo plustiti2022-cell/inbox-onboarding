@@ -128,7 +128,7 @@ class WorkflowTests(unittest.TestCase):
                 if mail["subject"] == "1":
                     return result(卡点="缺地址证明")
                 if mail["subject"] == "2":
-                    self_test.assertEqual(store.list_records(PROGRESS_TABLE)[0]["fields"]["internetMessageId"], "人工修改")
+                    self_test.assertEqual(store.list_records(PROGRESS_TABLE)[0]["fields"]["internetMessageId"], "<1@example.invalid>")
                     self_test.assertEqual(store.list_records(PROGRESS_TABLE)[0]["fields"]["最新收件时间"], now.isoformat())
                     return result(简要描述="请查收附件。")
                 return result(is_onboarding=False, 公司名称="", 客户名称="", 邮件="", 球在谁方="", 简要描述=None)
@@ -145,7 +145,7 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(progress["卡点"], "缺地址证明")
         self.assertNotIn("经办人", progress)
         self.assertEqual(progress["简要描述"], "请查收附件。")
-        self.assertEqual(progress["internetMessageId"], "人工修改")
+        self.assertEqual(progress["internetMessageId"], "<2@example.invalid>")
         self.assertEqual(progress["最新收件时间"], now.isoformat())
         self.assertTrue(all(r["fields"]["AI处理"] == "AI已处理" for r in store.list_records(MAIL_TABLE)))
         self.assertEqual(process_pending(store, Analyzer())["processed"], 0)
@@ -162,12 +162,13 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(store.list_records(MAIL_TABLE)[0]["fields"]["AI处理"], "AI失败")
         self.assertEqual(store.list_records(PROGRESS_TABLE), [])
 
-    def test_update_uses_manual_source_and_keeps_unspecified_fields(self):
+    def test_mail_update_replaces_agent_marker_and_keeps_unspecified_fields(self):
         store = MemoryStore()
-        store.create_record(MAIL_TABLE, {"receivedDateTime": "2026-11-03T00:00:00Z", "AI处理": "AI未完成"})
+        store.create_record(MAIL_TABLE, {"receivedDateTime": "2026-11-03T00:00:00Z", "AI处理": "AI未完成",
+                                         "internetMessageId": "<source@example.invalid>"})
         original = store.create_record(PROGRESS_TABLE, {
             "公司名称": "North Star Limited", "客户名称": "Alice Chen", "邮件": "alice@northstar.example",
-            "卡点": "缺地址证明", "经办人": "existing.handler", "internetMessageId": "<prior@example.invalid>"})
+            "卡点": "缺地址证明", "经办人": "existing.handler", "internetMessageId": "人工修改"})
 
         class Analyzer:
             def analyze(self, mail, known):
@@ -184,10 +185,26 @@ class WorkflowTests(unittest.TestCase):
         progress = store.list_records(PROGRESS_TABLE)[0]["fields"]
         self.assertEqual(progress["卡点"], "缺地址证明")
         self.assertEqual(progress["经办人"], "existing.handler")
-        self.assertEqual(progress["internetMessageId"], "人工修改")
+        self.assertEqual(progress["internetMessageId"], "<source@example.invalid>")
         updated = datetime.fromisoformat(progress["最新收件时间"])
         self.assertEqual(updated.utcoffset(), timedelta(hours=8))
         self.assertLess(abs((updated - before).total_seconds()), 5)
+
+    def test_missing_source_id_fails_without_writing_progress(self):
+        store = MemoryStore()
+        store.create_record(MAIL_TABLE, {"receivedDateTime": "2026-11-03T00:00:00Z", "AI处理": "AI未完成"})
+        original = store.create_record(PROGRESS_TABLE, {
+            "公司名称": "North Star Limited", "internetMessageId": "<prior@example.invalid>"})
+
+        class Analyzer:
+            def analyze(self, mail, known):
+                return result()
+
+        self.assertEqual(process_pending(store, Analyzer())["failed"], 1)
+        self.assertEqual(store.list_records(PROGRESS_TABLE), [original])
+        mail = store.list_records(MAIL_TABLE)[0]["fields"]
+        self.assertEqual(mail["AI处理"], "AI失败")
+        self.assertIn("missing internetMessageId", mail["处理说明"])
 
     def test_failure_stops_later_mail_and_resume_preserves_chronology(self):
         store = MemoryStore()
