@@ -13,7 +13,9 @@
 
 此聊天入口接受單聊文字指令，預設只有現有 OAuth 授權人可用。要開放給同一 Lark 企業內可使用此應用的成員，在機器人讀取的 `.env` 設定 `LARK_BITABLE_BOT_ACCESS=tenant` 並重啟。若要讓全體成員找到機器人，也需要在 Lark 將「應用可用範圍」設為全員。表格更新沿用現有 OAuth 授權人的權限。將設定改回 `owner` 並重啟即可恢復只限授權人。
 
-使用 `update_prompt.txt` 要求 AI 回傳六個中文欄位及 `is_onboarding`；以公司名、姓名、郵箱匹配唯一記錄，只有非 null 的新資訊會寫入，相同身份不重寫。「更新客戶狀態」這類自然語言會同步提取球權、卡點和簡要描述；若明確要求只修改某列，才保留其他進度欄位。卡點的空字串表示明確清空。寫入時另附當前北京時間和 `internetMessageId=人工修改`，經辦人保留。
+使用 `update_prompt.txt` 要求 AI 回傳六個中文欄位及 `is_onboarding`；以公司名、姓名、郵箱匹配唯一記錄，只有非 null 的新資訊會寫入，相同身份不重寫。「更新客戶狀態」這類自然語言會同步提取球權、卡點和簡要描述；若明確要求只修改某列，才保留其他進度欄位。卡點的空字串表示明確清空。寫入時另附當前北京時間和 `internetMessageId=人工修改（姓名）`，經辦人保留。
+
+姓名取自單聊發件人在 Lark 通訊錄中的名稱。需要應用身份權限 `contact:contact.base:readonly`（獲取通訊錄基本信息）和 `contact:user.base:readonly`（獲取用戶基本信息），並將發件人納入應用的通訊錄可訪問範圍。查不到姓名時仍寫入 `人工修改`。
 
 程式使用官方 SDK 的 WebSocket 長連線。既有機器人及發訊息權限可沿用；Developer Console 的「事件與回調 → 事件配置」須選「使用長連線接收事件」，添加應用身份事件 `im.message.receive_v1`。接收單聊需要應用身份權限 `im:message.p2p_msg:readonly`（舊版 `im:message.p2p_msg` 亦可），回覆需要 `im:message:send_as_bot` 或 `im:message`。只補缺少項目並發布版本，無需新增公網回調網址、加密策略或卡片回調。
 
