@@ -1,4 +1,4 @@
-"""Receive the authorized user's Lark DMs and reply after a confirmed update."""
+"""Receive authorized Lark DMs and reply after a confirmed update."""
 from __future__ import annotations
 
 import argparse
@@ -73,8 +73,9 @@ class BotClient:
 
 
 class ChatHandler:
-    def __init__(self, app_id, owner_id, updater, bot, database):
+    def __init__(self, app_id, owner_id, updater, bot, database, *, allowed_tenant_key=None):
         self.app_id, self.owner_id, self.updater, self.bot = app_id, owner_id, updater, bot
+        self.allowed_tenant_key = allowed_tenant_key
         self.lock = threading.Lock()
         self.db = sqlite3.connect(database, check_same_thread=False)
         self.db.execute("CREATE TABLE IF NOT EXISTS messages (message_id TEXT PRIMARY KEY, state TEXT, reply TEXT)")
@@ -94,15 +95,20 @@ class ChatHandler:
     def receive(self, payload):
         event = payload.get("event", {})
         sender, message = event.get("sender", {}), event.get("message", {})
-        owner_match = sender.get("sender_id", {}).get("open_id") == self.owner_id
+        sender_id = (sender.get("sender_id") or {}).get("open_id")
+        tenant_match = self.allowed_tenant_key is not None and sender.get("tenant_key") == self.allowed_tenant_key
+        sender_allowed = bool(sender_id and (sender_id == self.owner_id or tenant_match))
         emit("message_received", message_id=message.get("message_id"), chat_type=message.get("chat_type"),
-             message_type=message.get("message_type"), sender_type=sender.get("sender_type"), owner_match=owner_match)
+             message_type=message.get("message_type"), sender_type=sender.get("sender_type"), sender_allowed=sender_allowed)
         if payload.get("header", {}).get("app_id") != self.app_id:
             emit("message_ignored", message_id=message.get("message_id"), reason="different_app")
             return
-        if (sender.get("sender_type") != "user" or not owner_match
+        if (sender.get("sender_type") != "user"
                 or message.get("chat_type") != "p2p" or message.get("message_type") != "text"):
-            emit("message_ignored", message_id=message.get("message_id"), reason="requires_owner_private_text")
+            emit("message_ignored", message_id=message.get("message_id"), reason="requires_private_user_text")
+            return
+        if not sender_allowed:
+            emit("message_ignored", message_id=message.get("message_id"), reason="sender_not_allowed")
             return
         try:
             text = json.loads(message.get("content", ""))["text"].strip()
@@ -235,6 +241,9 @@ def main(argv=None):
     bot = BotClient(env)
     tools = client = handler = guard = None
     try:
+        access = env.get("LARK_BITABLE_BOT_ACCESS", "owner")
+        if access not in {"owner", "tenant"}:
+            raise ValueError("LARK_BITABLE_BOT_ACCESS must be owner or tenant")
         status = bot.check()
         print(json.dumps(status, ensure_ascii=False), flush=True)
         if args.check:
@@ -250,12 +259,18 @@ def main(argv=None):
             emit("scope_warning", reported_missing=status["missing_scopes"], action="starting_listener")
         guard = LarkRunLock(env["LARK_APP_ID"] + "_chat")
         tools = BitableTools(env, auth_project=args.auth_project)
-        owner = tools.api.request("GET", "/open-apis/authen/v1/user_info")["open_id"]
+        owner = tools.api.request("GET", "/open-apis/authen/v1/user_info")
+        allowed_tenant_key = None
+        if access == "tenant":
+            allowed_tenant_key = owner.get("tenant_key")
+            if not isinstance(allowed_tenant_key, str) or not allowed_tenant_key:
+                raise ValueError("Lark user authorization returned no tenant key for tenant-wide bot access")
         client = DeepSeekClient(env)
         runtime = PROJECT / ".runtime/bitable_bot" / env["LARK_APP_ID"]
         runtime.mkdir(parents=True, exist_ok=True)
-        handler = ChatHandler(env["LARK_APP_ID"], owner, ManualUpdater(client, tools), bot, runtime / "messages.sqlite3")
-        emit("listener_starting", bot_name=status["bot_name"], identity="existing_user_oauth")
+        handler = ChatHandler(env["LARK_APP_ID"], owner["open_id"], ManualUpdater(client, tools), bot,
+                              runtime / "messages.sqlite3", allowed_tenant_key=allowed_tenant_key)
+        emit("listener_starting", bot_name=status["bot_name"], identity="existing_user_oauth", access=access)
         return 0 if serve(env, handler, timeout=args.timeout) else 1
     except (ValueError, RuntimeError) as error:
         print(str(error), file=sys.stderr)
