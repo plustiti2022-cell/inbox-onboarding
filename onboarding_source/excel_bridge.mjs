@@ -53,7 +53,7 @@ async function writeWorkbook(request) {
     sheet.showGridLines = false;
     sheet.tabColor = tableIndex === 0 ? '#24476A' : '#7596B4';
     const widths = tableIndex === 0
-      ? { '公司名称': 35, '客户名称': 25, '邮件': 42, '球在谁方': 16, '卡点': 65, '简要描述': 74, '经办人': 25, '最新收件时间': 25 }
+      ? { '公司名称': 35, '客户名称': 25, '邮件': 42, '球在谁方': 16, '状态': 25, '卡点': 65, '简要描述': 74, '经办人': 25, '最新收件时间': 25 }
       : { 'subject': 60, 'body.content（去除html）': 105, '处理说明': 62, 'AI处理': 18, '是否为开户邮件': 20 };
     for (const [i, header] of headers.entries()) {
       const letter = columnName(i);

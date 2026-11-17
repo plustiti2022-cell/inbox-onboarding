@@ -11,14 +11,14 @@ from http.client import RemoteDisconnected
 from datetime import datetime, timedelta
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from model import MailAnalyzer, read_env, validate_result
+from model import MailAnalyzer, ONBOARDING_STATUSES, read_env, validate_result
 from storage import MAIL_TABLE, PROGRESS_TABLE, canonical_header, load_mail_input
 from workflow import find_customer, process_pending, progress_patch, select_handler
 
 
 def result(**updates):
     value = dict(is_onboarding=True, 公司名称="North Star Limited", 客户名称="Alice Chen",
-                 邮件="alice@northstar.example", 球在谁方="球在我方", 卡点=None,
+                 邮件="alice@northstar.example", 球在谁方="球在我方", 状态=None,
                  简要描述="客户回复资料，等待我方核对。")
     value.update(updates)
     return value
@@ -88,10 +88,10 @@ class WorkflowTests(unittest.TestCase):
 
     def test_absent_fields_are_not_cleared(self):
         update = progress_patch(result())
+        self.assertNotIn("状态", update)
         self.assertNotIn("卡点", update)
         self.assertNotIn("经办人", update)
-        self.assertEqual(progress_patch(result(卡点=""))["卡点"], "")
-        self.assertEqual(progress_patch(result(卡点="缺地址证明"))["卡点"], "缺地址证明")
+        self.assertEqual(progress_patch(result(状态="已通知客户补件"))["状态"], "已通知客户补件")
 
     def test_identity_patch_only_writes_new_information(self):
         current = {"公司名称": "Ｎorth Star Limited", "客户名称": "Alice Chen", "邮件": "ALICE@northstar.example"}
@@ -140,7 +140,7 @@ class WorkflowTests(unittest.TestCase):
                     if self_keys != {"公司名称", "客户名称", "邮件"}:
                         raise AssertionError("Historical progress was sent to the model")
                 if mail["subject"] == "1":
-                    return result(卡点="缺地址证明")
+                    return result(状态="已通知客户补件")
                 if mail["subject"] == "2":
                     created = store.list_records(PROGRESS_TABLE)[0]["fields"]
                     self_test.assertEqual(created["internetMessageId"], "<1@example.invalid>")
@@ -156,9 +156,9 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(seen, ["1", "2", "3"])
         self.assertEqual((report["created"], report["updated"], report["non_onboarding"]), (1, 1, 1))
         self.assertEqual(set(report["items"][0]["result"]), {
-            "is_onboarding", "公司名称", "客户名称", "邮件", "球在谁方", "卡点", "简要描述"})
+            "is_onboarding", "公司名称", "客户名称", "邮件", "球在谁方", "状态", "简要描述"})
         progress = store.list_records(PROGRESS_TABLE)[0]["fields"]
-        self.assertEqual(progress["卡点"], "缺地址证明")
+        self.assertEqual(progress["状态"], "已通知客户补件")
         self.assertEqual(progress["经办人"], "Fery.Li")
         self.assertEqual(progress["简要描述"], "请查收附件。")
         self.assertEqual(progress["internetMessageId"], "<2@example.invalid>")
@@ -184,7 +184,7 @@ class WorkflowTests(unittest.TestCase):
                                          "internetMessageId": "<source@example.invalid>"})
         original = store.create_record(PROGRESS_TABLE, {
             "公司名称": "North Star Limited", "客户名称": "Alice Chen", "邮件": "alice@northstar.example",
-            "卡点": "缺地址证明", "经办人": "Jx.Yao", "internetMessageId": "人工修改"})
+            "状态": "已通知客户补件", "卡点": "缺地址证明", "经办人": "Jx.Yao", "internetMessageId": "人工修改"})
 
         class Analyzer:
             def analyze(self, mail, known):
@@ -197,8 +197,9 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(report["updated"], 1)
         table, record_id, fields = write.call_args_list[0].args
         self.assertEqual((table, record_id), (PROGRESS_TABLE, original["record_id"]))
-        self.assertTrue({"公司名称", "客户名称", "邮件", "简要描述", "卡点", "经办人"}.isdisjoint(fields))
+        self.assertTrue({"公司名称", "客户名称", "邮件", "简要描述", "状态", "卡点", "经办人"}.isdisjoint(fields))
         progress = store.list_records(PROGRESS_TABLE)[0]["fields"]
+        self.assertEqual(progress["状态"], "已通知客户补件")
         self.assertEqual(progress["卡点"], "缺地址证明")
         self.assertEqual(progress["经办人"], "Jx.Yao")
         self.assertEqual(progress["internetMessageId"], "<source@example.invalid>")
@@ -254,17 +255,35 @@ class WorkflowTests(unittest.TestCase):
 
     def test_model_schema_rejects_bad_types_extra_fields_and_invalid_values(self):
         for bad in (result(is_onboarding="true"), result(blocker_resolved=True), result(经办人="someone"),
-                    result(邮件="a@b.example,c@d.example"), result(卡点=3), result(球在谁方="未知"),
+                    result(邮件="a@b.example,c@d.example"), result(卡点=None), result(状态=""),
+                    result(状态="待人工确认"), result(球在谁方="未知"),
                     {key: value for key, value in result().items() if key != "公司名称"}):
             with self.subTest(value=bad), self.assertRaises(ValueError):
                 validate_result(bad)
 
-    def test_model_schema_preserves_null_and_explicit_blocker_clear(self):
-        parsed = validate_result(result(公司名称=None, 客户名称=None, 邮件=None, 球在谁方=None,
-                                        卡点="", 简要描述=None))
-        self.assertIsNone(parsed["公司名称"])
-        self.assertIsNone(parsed["简要描述"])
-        self.assertEqual(parsed["卡点"], "")
+    def test_model_schema_accepts_the_prompt_labels_and_null(self):
+        prompt_path = Path(__file__).resolve().parents[1] / "prompt_onboarding.txt"
+        prompt = prompt_path.read_text(encoding="utf-8")
+        for status in ONBOARDING_STATUSES:
+            self.assertIn(f"- {status}：", prompt)
+            self.assertEqual(validate_result(result(状态=status))["状态"], status)
+        self.assertIsNone(validate_result(result(状态=None))["状态"])
+
+    def test_model_redacts_access_codes_in_its_request(self):
+        analyzer = MailAnalyzer({"LLM_API_KEY": "synthetic-secret", "LLM_API_HOST": "https://example.com/v1",
+                                 "LLM_MODEL": "synthetic-model"}, {},
+                                Path(__file__).resolve().parents[1] / "prompt_onboarding.txt")
+        reply = {"choices": [{"message": {"content": json.dumps(result())}}]}
+        code = "2F94AB170000ABCD1234567890ABCDEF"
+        mail = {"subject": "查看通知，验证码：529184",
+                "body.content（去除html）": f"Enter the security code:\n{code}\nDocument viewed."}
+        with patch("model.urlopen", return_value=io.BytesIO(json.dumps(reply).encode())) as send:
+            analyzer.analyze(mail, [])
+        payload = json.loads(send.call_args.args[0].data)
+        content = json.loads(payload["messages"][1]["content"])
+        self.assertEqual(content["邮件主题"], "查看通知，验证码：[访问码已移除]")
+        self.assertEqual(content["邮件正文"], "Enter the security code:\n[访问码已移除]\nDocument viewed.")
+        self.assertIn(code, mail["body.content（去除html）"])
 
     def test_model_distinguishes_gateway_auth_from_upstream_key_errors(self):
         analyzer = MailAnalyzer({"LLM_API_KEY": "synthetic-secret", "LLM_API_HOST": "https://example.com/v1",

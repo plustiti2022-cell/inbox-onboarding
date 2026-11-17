@@ -68,16 +68,16 @@ def find_customer(records: list[dict], result: dict) -> dict | None:
     return matches[0] if matches else None
 
 
-def progress_patch(result: dict, current: dict | None = None) -> dict:
+def progress_patch(result: dict, current: dict | None = None, *, fields=PROGRESS_RESULT_FIELDS, clearable=()) -> dict:
     patch = {}
-    for field in PROGRESS_RESULT_FIELDS:
+    for field in fields:
         value = result[field]
         if value is None:
             continue
         if field in IDENTITY_FIELDS:
             if not value or (current is not None and normalized(value) == normalized(current.get(field))):
                 continue
-        elif not value and field != "卡点":
+        elif not value and field not in clearable:
             continue
         patch[field] = value
     return patch
