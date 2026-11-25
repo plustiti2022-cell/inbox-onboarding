@@ -34,6 +34,84 @@ def emit(event, **fields):
                       "pid": os.getpid(), "event": event, **fields}, ensure_ascii=False), flush=True)
 
 
+_LOCALES = ("zh_cn", "zh_hk", "zh_tw", "en_us", "ja_jp")
+_SKIP_TAGS = {"img", "media", "emotion", "hr"}
+_INLINE_TAGS = {"text", "a", "at", "md", "code", "code_block", "markdown", "plain_text"}
+_TEXT_KEYS = ("title", "text", "plain_text", "markdown", "content")
+_SKIP_KEYS = {"tag", "style", "href", "user_id", "user_name", "image_key", "file_key", "emoji_type", "language"}
+
+
+def message_text(message):
+    """Plain text from a private message. Rich-text, cards and other structured bodies are flattened."""
+    raw = message.get("content")
+    if not isinstance(raw, str) or not raw.strip():
+        return ""
+    try:
+        content = json.loads(raw)
+    except (ValueError, TypeError):
+        return ""
+    if isinstance(content, str):
+        return content.strip()
+    if message.get("message_type") == "text" and isinstance(content, dict):
+        text = content.get("text")
+        return text.strip() if isinstance(text, str) else ""
+    if not isinstance(content, (dict, list)):
+        return ""
+    return _plain_text(content).strip()
+
+
+def _plain_text(node):
+    if isinstance(node, str):
+        return node
+    if isinstance(node, list):
+        lines = []
+        for item in node:
+            rendered = "".join(_plain_text(part) for part in item) if isinstance(item, list) else _plain_text(item)
+            if rendered.strip():
+                lines.append(rendered.strip())
+        return "\n".join(lines)
+    if not isinstance(node, dict):
+        return ""
+    for locale in _LOCALES:
+        body = node.get(locale)
+        if isinstance(body, (dict, list)):
+            return _plain_text(body)
+    tag = node.get("tag")
+    if tag in _SKIP_TAGS:
+        return ""
+    if tag == "at":
+        name = node.get("user_name")
+        return f"@{name.strip()}" if isinstance(name, str) and name.strip() else ""
+    if tag == "a":
+        label = node.get("text").strip() if isinstance(node.get("text"), str) else ""
+        href = node.get("href").strip() if isinstance(node.get("href"), str) else ""
+        if label and href and href not in label:
+            return f"{label} ({href})"
+        return label or href
+    pieces, consumed = [], set()
+    for key in _TEXT_KEYS:
+        if key not in node:
+            continue
+        consumed.add(key)
+        value = node[key]
+        if isinstance(value, str):
+            if value.strip():
+                pieces.append(value if key == "text" else value.strip())
+        elif isinstance(value, (dict, list)):
+            rendered = _plain_text(value).strip()
+            if rendered:
+                pieces.append(rendered)
+    for key, value in node.items():
+        if key in consumed or key in _SKIP_KEYS or not isinstance(value, (dict, list)):
+            continue
+        rendered = _plain_text(value).strip()
+        if rendered:
+            pieces.append(rendered)
+    if tag in _INLINE_TAGS:
+        return "".join(pieces)
+    return "\n".join(pieces)
+
+
 class BotClient:
     def __init__(self, env):
         self.env, self.http = env, LarkHTTP(env)
@@ -110,19 +188,17 @@ class ChatHandler:
         if payload.get("header", {}).get("app_id") != self.app_id:
             emit("message_ignored", message_id=message.get("message_id"), reason="different_app")
             return
-        if (sender.get("sender_type") != "user"
-                or message.get("chat_type") != "p2p" or message.get("message_type") != "text"):
+        if sender.get("sender_type") != "user" or message.get("chat_type") != "p2p":
             emit("message_ignored", message_id=message.get("message_id"), reason="requires_private_user_text")
             return
         if not sender_allowed:
             emit("message_ignored", message_id=message.get("message_id"), reason="sender_not_allowed")
             return
-        try:
-            text = json.loads(message.get("content", ""))["text"].strip()
-        except (ValueError, KeyError, TypeError, AttributeError):
-            return
+        text = message_text(message)
         message_id = message.get("message_id")
         if not message_id or not text:
+            if message_id:
+                emit("message_ignored", message_id=message_id, reason="no_text")
             return
         with self.lock:
             inserted = self.db.execute("INSERT OR IGNORE INTO messages VALUES (?, 'processing', NULL)", (message_id,)).rowcount
