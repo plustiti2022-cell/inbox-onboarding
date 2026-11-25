@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from .bot import BotClient, ChatHandler, LarkError, main
+from .bot import BotClient, ChatHandler, LarkError, main, message_text
 from .tools import BitableTools
 from .update import ManualUpdater
 
@@ -133,12 +133,64 @@ class ChatTests(unittest.TestCase):
         self.assertTrue(callable(self.updater.run.call_args.kwargs["on_event"]))
         self.bot.reply.assert_called_once_with("om1", self.updater.run.return_value)
 
+    def test_rich_and_card_messages_are_converted_to_text(self):
+        post = {"zh_cn": {"title": "标题", "content": [
+            [{"tag": "text", "text": "第一行 :"},
+             {"tag": "a", "href": "http://www.feishu.cn", "text": "超链接"},
+             {"tag": "at", "user_id": "ou_1", "user_name": "tom"}],
+            [{"tag": "img", "image_key": "img_xxx"}],
+            [{"tag": "text", "text": "第二行"}, {"tag": "text", "text": "文本"}],
+        ]}}
+        payload = event()
+        payload["event"]["message"].update(message_type="post", message_id="om-post",
+                                            content=json.dumps(post, ensure_ascii=False))
+        self.handler.receive(payload)
+        self.flush()
+        self.assertEqual(self.updater.run.call_args.args[0],
+                         "标题\n第一行 :超链接 (http://www.feishu.cn)@tom\n第二行文本")
+
+        card = {"header": {"title": {"tag": "plain_text", "content": "卡片"}},
+                "elements": [{"tag": "markdown", "content": "把状态改成开户完成"}]}
+        payload = event()
+        payload["event"]["message"].update(message_type="interactive", message_id="om-card",
+                                            content=json.dumps(card, ensure_ascii=False))
+        self.handler.receive(payload)
+        self.flush()
+        self.assertEqual(self.updater.run.call_args.args[0], "卡片\n把状态改成开户完成")
+
+        bare = {"title": "", "content": [[{"tag": "text", "text": "只改卡点"}]]}
+        self.assertEqual(message_text({"message_type": "post", "content": json.dumps(bare)}), "只改卡点")
+        payload = event()
+        payload["event"]["message"].update(message_type="post", message_id="om-bare",
+                                            content=json.dumps(bare, ensure_ascii=False))
+        self.handler.receive(payload)
+        self.flush()
+        self.assertEqual(self.updater.run.call_args.args[0], "只改卡点")
+
+        for kind, body in (
+            ("image", {"image_key": "img"}),
+            ("file", {"file_key": "file", "file_name": "a.pdf"}),
+            ("sticker", {"file_key": "stk"}),
+            ("audio", {"file_key": "aud", "duration": 1}),
+            ("media", {"file_key": "vid"}),
+            ("post", {"zh_cn": {"title": "", "content": [[{"tag": "img", "image_key": "img"}]]}}),
+        ):
+            payload = event()
+            payload["event"]["message"].update(message_type=kind, message_id="om-" + kind,
+                                                content=json.dumps(body))
+            self.handler.receive(payload)
+        self.flush()
+        self.assertEqual(self.updater.run.call_count, 3)
+
     def test_other_users_bots_apps_groups_and_bad_text_are_ignored(self):
         for part, key, value in (("sender", "sender_type", "bot"), ("message", "chat_type", "group"),
-                                 ("message", "message_type", "image"), ("message", "content", "invalid")):
+                                 ("message", "content", "invalid")):
             payload = event()
             payload["event"][part][key] = value
             self.handler.receive(payload)
+        payload = event()
+        payload["event"]["message"].update(message_type="image", content=json.dumps({"image_key": "img"}))
+        self.handler.receive(payload)
         payload = event()
         payload["event"]["sender"]["sender_id"]["open_id"] = "someone_else"
         self.handler.receive(payload)
@@ -162,11 +214,13 @@ class ChatTests(unittest.TestCase):
             payload["header"]["tenant_key"] = "home"
             payload["event"]["sender"]["tenant_key"] = tenant
             self.handler.receive(payload)
-        for part, key, value in (("sender", "sender_id", {}), ("message", "chat_type", "group"),
-                                 ("message", "message_type", "image")):
+        for part, key, value in (("sender", "sender_id", {}), ("message", "chat_type", "group")):
             payload = copy.deepcopy(private)
             payload["event"][part][key] = value
             self.handler.receive(payload)
+        payload = copy.deepcopy(private)
+        payload["event"]["message"].update(message_type="image", content=json.dumps({"image_key": "img"}))
+        self.handler.receive(payload)
         self.flush()
         self.updater.run.assert_not_called()
         self.bot.reply.assert_not_called()
