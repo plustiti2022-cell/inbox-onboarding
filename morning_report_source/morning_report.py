@@ -31,8 +31,12 @@ def read_progress(env):
     path = f"/open-apis/bitable/v1/apps/{env['LARK_BASE_TOKEN']}/tables/{env['LARK_PROGRESS_TABLE_ID']}/records"
     records = api.paged(path, query={"page_size": 50})
     api.http.session.close()
-    return [{**{name: text(record["fields"].get(name)) for name in TEXT_FIELDS},
-             "最新收件时间": record["fields"].get("最新收件时间")} for record in records]
+    return [
+        {**{name: text(record["fields"].get(name)) for name in TEXT_FIELDS},
+         "最新收件时间": record["fields"].get("最新收件时间")}
+        for record in records
+        if text(record["fields"].get("状态")) != "已关闭"
+    ]
 
 
 def ball(row):
