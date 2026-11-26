@@ -13,7 +13,8 @@ from .update import ManualUpdater
 
 
 def answer(**changes):
-    result = {"is_onboarding": True, "公司名称": "ABC公司", "客户名称": "陳先生", "邮件": "chan@example.com",
+    result = {"is_onboarding": True, "命中多笔交易记录": 0,
+              "公司名称": "ABC公司", "客户名称": "陳先生", "邮件": "chan@example.com",
               "球在谁方": None, "状态": None, "卡点": None, "简要描述": "等待合规审核"}
     result.update(changes)
     return result
@@ -55,6 +56,7 @@ class UpdateTests(unittest.TestCase):
         content = json.loads(messages[1]["content"])
         self.assertEqual(set(content["公司名称|客户名称|邮件列表"][0]), {"公司名称", "客户名称", "邮件"})
         self.assertTrue(self.client.complete.call_args.kwargs["json_mode"])
+        self.client.complete.assert_called_once()
         self.assertEqual([item.args[0] for item in trace.call_args_list], [
             "ai_result", "record_matched", "update_prepared", "update_confirmed"])
         self.assertEqual(trace.call_args_list[2].kwargs["fields"], fields)
@@ -89,20 +91,68 @@ class UpdateTests(unittest.TestCase):
             (answer(公司名称=None, 客户名称=None, 邮件=None), self.records),
         ):
             with self.subTest(result=model_result):
+                self.client.complete.reset_mock()
                 self.tools.api.iter_pages.side_effect = lambda *a, **kw: iter([records])
                 self.client.complete.return_value = {"content": json.dumps(model_result)}
                 self.assertTrue(self.updater.run("修改").startswith("未更新"))
+                self.client.complete.assert_called_once()
                 self.tools.update_record.assert_not_called()
 
     def test_invalid_output_and_unconfirmed_write_never_claim_success(self):
         for output in ("not json", json.dumps({**answer(), "record_id": "rec1"}),
-                       json.dumps(answer(状态="等待合规审核"))):
+                       json.dumps(answer(状态="等待合规审核")),
+                       json.dumps(answer(命中多笔交易记录=True)), json.dumps(answer(命中多笔交易记录=2))):
             self.client.complete.return_value = {"content": output}
             self.assertTrue(self.updater.run("修改").startswith("未更新"))
             self.tools.update_record.assert_not_called()
         self.client.complete.return_value = {"content": json.dumps(answer())}
         self.tools.update_record.side_effect = RuntimeError("lost acknowledgement")
         self.assertTrue(self.updater.run("修改").startswith("更新未獲確認"))
+
+    def test_multiple_records_split_and_update_in_order_despite_unmatched_item(self):
+        self.records.append({"record_id": "rec3", "fields": {"公司名称": "GHI公司"}})
+        instruction = "ABC在审核，DEF等银行下户，GHI待跟进，都只改摘要。"
+        items = ["ABC公司只改摘要为在审核", "DEF公司只改摘要为等银行下户", "GHI公司只改摘要为待跟进"]
+        self.client.complete.side_effect = [{"content": json.dumps(result)} for result in (
+            answer(命中多笔交易记录=1), {"修改指令列表": items}, answer(简要描述="在审核"),
+            answer(公司名称="DEF公司", 客户名称=None, 邮件=None),
+            answer(公司名称="GHI公司", 客户名称=None, 邮件=None, 简要描述="待跟进"),
+        )]
+        result = self.updater.run(instruction, editor_name="李小明")
+        requests = [call.args[0][1]["content"] for call in self.client.complete.call_args_list]
+        self.assertEqual(json.loads(requests[0])["修改指令"], instruction)
+        self.assertEqual(requests[1], instruction)
+        self.assertEqual([json.loads(request)["修改指令"] for request in requests[2:]], items)
+        updates = [(call.args[1], call.args[2]["简要描述"], call.args[2]["internetMessageId"])
+                   for call in self.tools.update_record.call_args_list]
+        self.assertEqual(updates, [
+            ("rec1", "在审核", "人工修改（李小明）"), ("rec3", "待跟进", "人工修改（李小明）"),
+        ])
+        self.assertTrue(result.startswith("已更新 2 筆。命中多笔交易记录"))
+        self.assertIn("2. 未更新：找不到對應", result)
+
+    def test_invalid_split_and_multi_record_subinstructions_do_not_write(self):
+        for items, followups in ((["a", " "], []), (["a", "b"], [answer(命中多笔交易记录=1)] * 2)):
+            with self.subTest(items=items):
+                self.client.complete.reset_mock()
+                self.client.complete.side_effect = [{"content": json.dumps(result)} for result in (
+                    answer(命中多笔交易记录=1), {"修改指令列表": items}, *followups,
+                )]
+                self.assertIn("命中多笔交易记录", self.updater.run("批次更新"))
+                self.assertEqual(self.client.complete.call_count, 2 + len(followups))
+                self.tools.update_record.assert_not_called()
+
+    def test_batch_keeps_confirmed_result_and_stops_after_unconfirmed_write(self):
+        self.client.complete.side_effect = [{"content": json.dumps(result)} for result in (
+            answer(命中多笔交易记录=1), {"修改指令列表": ["a", "b", "c"]}, answer(), answer(),
+        )]
+        self.tools.update_record.side_effect = [None, RuntimeError("lost acknowledgement")]
+        result = self.updater.run("批次更新")
+        self.assertTrue(result.startswith("已更新 1 筆。"))
+        self.assertIn("2. 更新未獲確認", result)
+        self.assertIn("後續 1 項尚未處理", result)
+        self.assertEqual(self.client.complete.call_count, 4)
+        self.assertEqual(self.tools.update_record.call_count, 2)
 
 
 class ChatTests(unittest.TestCase):
