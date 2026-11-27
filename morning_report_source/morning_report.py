@@ -3,7 +3,7 @@ import argparse
 import hashlib
 import json
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from zoneinfo import ZoneInfo
@@ -17,7 +17,7 @@ HK = ZoneInfo("Asia/Hong_Kong")
 BALLS = ("球在我方", "球在客户", "球在合规", "球权待确认")
 LABELS = ("球在我方", "球在客户", "球在合规", "球权待确认")
 COLORS = ("orange", "blue", "green", "purple")
-TEXT_FIELDS = ("公司名称", "客户名称", "邮件", "球在谁方", "卡点", "简要描述", "经办人")
+TEXT_FIELDS = ("公司名称", "客户名称", "邮件", "球在谁方", "卡点", "简要描述", "经办人", "状态")
 
 
 def text(value):
@@ -35,7 +35,6 @@ def read_progress(env):
         {**{name: text(record["fields"].get(name)) for name in TEXT_FIELDS},
          "最新收件时间": record["fields"].get("最新收件时间")}
         for record in records
-        if text(record["fields"].get("状态")) != "已关闭"
     ]
 
 
@@ -53,9 +52,13 @@ def count_line(rows, personal=False):
             f"等合规：{compliance}｜球权待确认：{unknown}")
 
 
-def entry(row, index, now):
+def entry_title(row, index):
     identity = " ｜ ".join(row[name] for name in TEXT_FIELDS[:3] if row[name])
-    lines = [f"**{index}. {identity}**"]
+    return f"**{index}. {identity}**"
+
+
+def entry(row, index, now):
+    lines = [entry_title(row, index)]
     if row["最新收件时间"]:
         received = datetime.fromtimestamp(row["最新收件时间"] / 1000, tz=HK)
         days = (now - received).days
@@ -88,17 +91,43 @@ def progress_url(env):
     return urlunsplit(parsed._replace(query=urlencode(query), fragment=""))
 
 
-def build_cards(rows, now, table_url):
-    overview = [div(f"表格读取时间：{now:%Y-%m-%d %H:%M:%S}（香港时间）"),
-                div(f"**共 {len(rows)} 笔进度记录**\n{count_line(rows)}"),
-                {"tag": "action", "actions": [{"tag": "button", "type": "default",
-                 "text": {"tag": "plain_text", "content": "查看开户进度表"}, "url": table_url}]}]
-    cards = [card(f"开户跟进晨报｜{now:%Y-%m-%d}", "blue", overview)]
+def handler_groups(rows):
     groups = {}
     for row in rows:
         groups.setdefault(row["经办人"] or "未分配", []).append(row)
     for handler in sorted(groups, key=lambda name: (name == "未分配", name.casefold(), name)):
-        group = groups[handler]
+        yield handler, groups[handler]
+
+
+def completed_card(rows, now):
+    today = now.astimezone(HK).replace(hour=0, minute=0, second=0, microsecond=0)
+    month_start_ms = int(today.replace(day=1).timestamp() * 1000)
+    tomorrow_ms = int((today + timedelta(days=1)).timestamp() * 1000)
+    completed = [row for row in rows if row.get("状态") == "开户完成"
+                 and row["最新收件时间"] and month_start_ms <= row["最新收件时间"] < tomorrow_ms]
+    if not completed:
+        return None
+
+    elements = []
+    for handler, group in handler_groups(completed):
+        if elements:
+            elements.append({"tag": "hr"})
+        elements.append(div(f"**{handler}（{len(group)} 笔）**"))
+        items = sorted(group, key=lambda row: row["最新收件时间"], reverse=True)
+        for index, row in enumerate(items, 1):
+            received = datetime.fromtimestamp(row["最新收件时间"] / 1000, tz=HK)
+            elements.append(div(f"{entry_title(row, index)}\n开户成功时间：{received:%Y-%m-%d %H:%M}"))
+    return card(f"本月开户完成｜{len(completed)} 笔", "green", elements)
+
+
+def build_cards(rows, now, table_url):
+    active_rows = [row for row in rows if row.get("状态") not in ("已关闭", "开户完成")]
+    overview = [div(f"表格读取时间：{now:%Y-%m-%d %H:%M:%S}（香港时间）"),
+                div(f"**共 {len(active_rows)} 笔进度记录**\n{count_line(active_rows)}"),
+                {"tag": "action", "actions": [{"tag": "button", "type": "default",
+                 "text": {"tag": "plain_text", "content": "查看开户进度表"}, "url": table_url}]}]
+    cards = [card(f"开户跟进晨报｜{now:%Y-%m-%d}", "blue", overview)]
+    for handler, group in handler_groups(active_rows):
         elements = [div(count_line(group, personal=True))]
         for key, label in zip(BALLS, LABELS):
             items = sorted((row for row in group if ball(row) == key),
@@ -108,6 +137,9 @@ def build_cards(rows, now, table_url):
                 elements.extend(div(entry(row, index, now)) for index, row in enumerate(items, 1))
         color = COLORS[int.from_bytes(hashlib.sha256(handler.encode()).digest()[:2], "big") % len(COLORS)]
         cards.append(card(f"{handler}｜{len(group)} 笔进度记录", color, elements))
+    completed = completed_card(rows, now)
+    if completed is not None:
+        cards.append(completed)
     return cards
 
 
